@@ -248,6 +248,11 @@ router.delete('/messages/:id', requireAuth, (req: Request, res: Response): void 
 // ── POST /api/messages/:id/view  (view-once) ─────────────────────────────────
 
 router.post('/messages/:id/view', requireAuth, (req: Request, res: Response): void => {
+  if (req.user!.role === 'admin') {
+    res.status(403).json({ error: 'Administrators cannot mark messages as viewed' });
+    return;
+  }
+
   const db  = getDb();
   const msg = db.prepare(
     'SELECT * FROM messages WHERE id = ? AND deleted_at IS NULL',
