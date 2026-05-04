@@ -53,11 +53,15 @@ async function loadUsers() {
       <td>${esc(u.email || '—')}</td>
       <td><span class="badge ${u.role === 'admin' ? 'badge-yellow' : 'badge-blue'}">${u.role}</span></td>
       <td>${u.two_fa_enabled ? '✓' : '—'}</td>
-      <td><span class="badge ${u.enabled ? 'badge-green' : 'badge-red'}">${u.enabled ? 'Active' : 'Disabled'}</span></td>
+      <td>
+        <span class="badge ${u.enabled ? 'badge-green' : 'badge-red'}">${u.enabled ? 'Active' : 'Disabled'}</span>
+        ${u.login_locked ? '<span class="badge badge-red badge-locked" title="Locked after too many failed login attempts">🔒 Locked</span>' : ''}
+      </td>
       <td>${fmtDate(u.last_seen)}</td>
       <td>
         <button class="btn-sm btn-edit"   onclick="openEditUser(${u.id})">Edit</button>
         <button class="btn-sm btn-danger" onclick="disableUser(${u.id})" ${!u.enabled ? 'disabled' : ''}>Disable</button>
+        ${u.login_locked ? `<button class="btn-sm btn-unlock" onclick="unlockUser(${u.id})">Unlock</button>` : ''}
         ${u.email ? `<button class="btn-sm btn-invite" onclick="quickInvite(${u.id})">Invite</button>` : ''}
       </td>
     `;
@@ -164,6 +168,20 @@ async function disableUser(id) {
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     alert(data.error || 'Could not disable user.');
+    return;
+  }
+  loadUsers();
+}
+
+async function unlockUser(id) {
+  const res = await apiFetch(`/api/admin/users/${id}`, {
+    method:  'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ loginLocked: false }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    alert(data.error || 'Could not unlock user.');
     return;
   }
   loadUsers();

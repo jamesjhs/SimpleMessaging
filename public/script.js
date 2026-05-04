@@ -20,7 +20,8 @@ const pendingMessages = new Map();
 let activePendingId   = null;
 
 // OTP / login state
-let otpTempToken = null;
+let otpTempToken     = null;
+let loginCooldownTimer = null;
 
 // ── Colour schemes ───────────────────────────────────────────────────────────
 const COLOUR_SCHEMES = {
@@ -58,8 +59,16 @@ function showLoginOverlay() {
   document.getElementById('login-overlay').style.display = 'flex';
   showLoginStep('credentials');
   document.getElementById('login-password').value = '';
-  document.getElementById('login-error').textContent = '';
+  const errorEl = document.getElementById('login-error');
+  errorEl.textContent = '';
+  errorEl.style.color = '';
   document.getElementById('login-username').focus();
+  if (loginCooldownTimer) {
+    clearInterval(loginCooldownTimer);
+    loginCooldownTimer = null;
+  }
+  const btn = document.getElementById('login-btn');
+  if (btn) btn.disabled = false;
 }
 
 function hideLoginOverlay() {
@@ -70,6 +79,30 @@ function showLoginStep(step) {
   ['credentials', 'otp', 'change-password'].forEach(s => {
     document.getElementById(`login-step-${s}`).style.display = s === step ? 'block' : 'none';
   });
+}
+
+function startLoginCooldown(seconds, errorEl) {
+  if (loginCooldownTimer) clearInterval(loginCooldownTimer);
+  const btn = document.getElementById('login-btn');
+  if (btn) btn.disabled = true;
+  let remaining = seconds;
+  const update = () => {
+    errorEl.textContent = `⏳ Too many failed attempts. Please wait ${remaining} second${remaining !== 1 ? 's' : ''} before trying again.`;
+    errorEl.style.color = '#ffcc00';
+  };
+  update();
+  loginCooldownTimer = setInterval(() => {
+    remaining--;
+    if (remaining <= 0) {
+      clearInterval(loginCooldownTimer);
+      loginCooldownTimer = null;
+      if (btn) btn.disabled = false;
+      errorEl.textContent = 'You may try again now.';
+      errorEl.style.color = '#4caf50';
+    } else {
+      update();
+    }
+  }, 1000);
 }
 
 // Load Cloudflare Turnstile widget after config is available
@@ -120,7 +153,12 @@ async function attemptLogin() {
     const data = await res.json();
 
     if (!res.ok) {
-      errorEl.textContent = data.error || 'Invalid credentials.';
+      if (data.retryAfter) {
+        startLoginCooldown(data.retryAfter, errorEl);
+      } else {
+        errorEl.textContent = data.error || 'Invalid credentials.';
+        errorEl.style.color = '';
+      }
       if (window.turnstile) window.turnstile.reset();
       return;
     }

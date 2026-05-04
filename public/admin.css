@@ -127,6 +127,7 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .btn-edit   { background: #1565c0; color: #fff; }
 .btn-danger { background: #c62828; color: #fff; }
 .btn-invite { background: #2e7d32; color: #fff; }
+.btn-unlock { background: #e65100; color: #fff; }
 
 /* ── Status badges ─────────────────────────────────────────────────────────── */
 .badge {
@@ -140,6 +141,7 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .badge-red    { background: #b71c1c; color: #ffcdd2; }
 .badge-yellow { background: #f57f17; color: #fff9c4; }
 .badge-blue   { background: #0d47a1; color: #bbdefb; }
+.badge-locked { margin-left: 4px; }
 
 /* ── Modal ─────────────────────────────────────────────────────────────────── */
 .modal-overlay {

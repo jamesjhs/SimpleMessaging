@@ -101,7 +101,7 @@ router.patch('/users/:id', async (req: Request, res: Response): Promise<void> =>
 
   const {
     displayName, email, role, enabled, twoFaEnabled,
-    forcePasswordChange, newPassword,
+    forcePasswordChange, newPassword, loginLocked,
   } = req.body as Record<string, unknown>;
 
   const updates: string[] = [];
@@ -113,6 +113,17 @@ router.patch('/users/:id', async (req: Request, res: Response): Promise<void> =>
   if (enabled             !== undefined) { updates.push('enabled = ?');                vals.push(enabled ? 1 : 0); }
   if (twoFaEnabled        !== undefined) { updates.push('two_fa_enabled = ?');         vals.push(twoFaEnabled ? 1 : 0); }
   if (forcePasswordChange !== undefined) { updates.push('force_password_change = ?'); vals.push(forcePasswordChange ? 1 : 0); }
+  if (loginLocked !== undefined) {
+    updates.push('login_locked = ?');
+    vals.push(loginLocked ? 1 : 0);
+    if (!loginLocked) {
+      // Reset failure counters when admin unlocks the account
+      updates.push('failed_login_attempts = ?');
+      vals.push(0);
+      updates.push('locked_until = ?');
+      vals.push(null);
+    }
+  }
   if (newPassword) {
     const hash = await hashPassword(String(newPassword));
     updates.push('password_hash = ?');

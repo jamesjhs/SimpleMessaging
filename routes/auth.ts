@@ -47,15 +47,63 @@ router.post(
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as DbUser | undefined;
 
   if (!user || !user.enabled) {
-    res.status(401).json({ error: 'Invalid credentials' });
+    res.status(401).json({ error: 'Invalid credentials.' });
+    return;
+  }
+
+  const now = Date.now();
+
+  // Permanent lockout – requires admin reset
+  if (user.login_locked) {
+    res.status(423).json({
+      error:  'Your account has been locked due to too many failed login attempts. Please contact your administrator to unlock it.',
+      locked: true,
+    });
+    return;
+  }
+
+  // Temporary lockout – 30-second cooldown
+  if (user.locked_until && user.locked_until > now) {
+    const waitSec = Math.ceil((user.locked_until - now) / 1000);
+    res.status(423).json({
+      error:      `Too many failed login attempts. Please wait ${waitSec} second${waitSec !== 1 ? 's' : ''} before trying again.`,
+      retryAfter: waitSec,
+    });
     return;
   }
 
   const ok = await verifyPassword(password, user.password_hash);
   if (!ok) {
-    res.status(401).json({ error: 'Invalid credentials' });
+    const newCount = (user.failed_login_attempts ?? 0) + 1;
+    if (newCount >= 3) {
+      db.prepare(
+        'UPDATE users SET failed_login_attempts = ?, login_locked = 1, locked_until = NULL WHERE id = ?',
+      ).run(newCount, user.id);
+      res.status(423).json({
+        error:  'Your account has been locked due to too many failed login attempts. Please contact your administrator to unlock it.',
+        locked: true,
+      });
+    } else if (newCount === 2) {
+      db.prepare(
+        'UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?',
+      ).run(newCount, now + 30_000, user.id);
+      res.status(423).json({
+        error:      'Too many failed login attempts. Please wait 30 seconds before trying again.',
+        retryAfter: 30,
+      });
+    } else {
+      db.prepare(
+        'UPDATE users SET failed_login_attempts = ? WHERE id = ?',
+      ).run(newCount, user.id);
+      res.status(401).json({ error: 'Invalid credentials.' });
+    }
     return;
   }
+
+  // Successful login – reset lockout counters
+  db.prepare(
+    'UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?',
+  ).run(user.id);
 
   // 2FA required?
   if (user.two_fa_enabled && user.email) {
