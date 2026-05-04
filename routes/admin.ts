@@ -260,9 +260,15 @@ router.post('/import', jsonUp.single('file'), async (req: Request, res: Response
     let userId    = userCache.get(nameKey);
 
     if (!userId) {
-      // Auto-create stub user for unmatched display name
-      const stub     = p.user.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 30);
-      const username = `${stub}_imported`;
+      // Auto-create stub user for unmatched display name.
+      // Append a numeric suffix when the base username is already taken to prevent collision.
+      const base    = p.user.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 28);
+      let username  = `${base}_imported`;
+      let attempt   = 0;
+      while (db.prepare('SELECT id FROM users WHERE username = ?').get(username)) {
+        attempt++;
+        username = `${base}_imported_${attempt}`;
+      }
       const password = crypto.randomBytes(8).toString('hex');
       const hash     = await hashPassword(password);
       try {

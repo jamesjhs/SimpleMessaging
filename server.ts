@@ -9,6 +9,7 @@ import path   from 'path';
 import fs     from 'fs';
 import { initDb, getSetting } from './db';
 import { parseCookies, resolveSession } from './lib/auth';
+import { rateLimiter } from './lib/rateLimiter';
 import authRouter     from './routes/auth';
 import messagesRouter from './routes/messages';
 import adminRouter    from './routes/admin';
@@ -52,7 +53,7 @@ app.use('/api',       messagesRouter);
 app.use('/api/admin', adminRouter);
 
 // ── Admin panel HTML (protected) ──────────────────────────────────────────────
-app.get('/admin', (req: Request, res: Response): void => {
+app.get('/admin', rateLimiter({ windowMs: 60_000, max: 30 }), (req: Request, res: Response): void => {
   const cookies = parseCookies(req);
   const user    = resolveSession(cookies.session);
   if (!user || user.role !== 'admin') {
@@ -63,7 +64,7 @@ app.get('/admin', (req: Request, res: Response): void => {
 });
 
 // ── PWA manifest (only when enabled) ─────────────────────────────────────────
-app.get('/manifest.json', (_req: Request, res: Response): void => {
+app.get('/manifest.json', rateLimiter({ windowMs: 60_000, max: 60 }), (_req: Request, res: Response): void => {
   if (getSetting('pwa_enabled') !== '1') {
     res.status(404).json({ error: 'PWA not enabled' });
     return;
@@ -72,7 +73,7 @@ app.get('/manifest.json', (_req: Request, res: Response): void => {
 });
 
 // ── Service worker (only when PWA enabled) ────────────────────────────────────
-app.get('/sw.js', (_req: Request, res: Response): void => {
+app.get('/sw.js', rateLimiter({ windowMs: 60_000, max: 60 }), (_req: Request, res: Response): void => {
   if (getSetting('pwa_enabled') !== '1') {
     res.status(404).send('');
     return;

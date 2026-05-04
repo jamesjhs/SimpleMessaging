@@ -586,7 +586,7 @@ document.getElementById('postForm').addEventListener('submit', async e => {
   const isBlurred = document.getElementById('blurInput').checked;
   const replyData = replyingTo ? { ...replyingTo } : null;
   const submittedAt = Date.now();
-  const pendingId   = 'p-' + submittedAt;
+  const pendingId   = 'p-' + (crypto.randomUUID ? crypto.randomUUID() : `${submittedAt}-${Math.random().toString(36).slice(2)}`);
 
   const bubbleEl = createPendingBubble(pendingId, text, fileToSend, replyData);
   pendingMessages.set(pendingId, { bubbleEl, formData: null, xhr: null, cancelled: false });
