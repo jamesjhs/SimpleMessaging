@@ -181,6 +181,7 @@ async function attemptLogin() {
     // Success
     currentUser = data.user.displayName;
     currentRole = data.user.role;
+    if (currentRole === 'admin') { window.location.href = '/admin.html'; return; }
     hideLoginOverlay();
     init();
 
@@ -216,6 +217,7 @@ async function verifyOtp() {
     }
 
     hideLoginOverlay();
+    if (currentRole === 'admin') { window.location.href = '/admin.html'; return; }
     init();
   } catch {
     document.getElementById('otp-error').textContent = 'Connection error. Please try again.';
@@ -243,6 +245,7 @@ async function submitNewPassword() {
     const data = await res.json();
     if (!res.ok) { errorEl.textContent = data.error || 'Failed to change password.'; return; }
     hideLoginOverlay();
+    if (currentRole === 'admin') { window.location.href = '/admin.html'; return; }
     init();
   } catch {
     errorEl.textContent = 'Connection error. Please try again.';
@@ -1476,6 +1479,7 @@ async function init() {
         return;
       }
 
+      if (data.role === 'admin') { window.location.href = '/admin.html'; return; }
       hideLoginOverlay();
       init();
     } else {

@@ -149,6 +149,11 @@ router.post(
   rateLimiter({ windowMs: 60_000, max: 30, message: 'Sending too fast. Please slow down.' }),
   upload.single('image'),
   async (req: Request, res: Response): Promise<void> => {
+    if (req.user!.role === 'admin') {
+      res.status(403).json({ error: 'Administrators cannot send chat messages' });
+      return;
+    }
+
     const { text, viewOnce, isBlurred, replyUser, replyText, replyId, submittedAt } =
       req.body as Record<string, string | undefined>;
 
