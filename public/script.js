@@ -23,6 +23,18 @@ let activePendingId   = null;
 let otpTempToken     = null;
 let loginCooldownTimer = null;
 
+// Reaction picker state
+let reactionPickerTarget     = null; // .post element currently targeted
+let reactionPickerOpenedAt   = 0;    // timestamp to suppress immediate dismiss
+let suppressPickerDismiss    = false;
+
+// Long-press detection state (shared between touch and mouse)
+let lpTimer   = null;
+let lpTarget  = null;
+let lpStartX  = 0;
+let lpStartY  = 0;
+let lpMoved   = false;
+
 // ── Colour schemes ───────────────────────────────────────────────────────────
 const COLOUR_SCHEMES = {
   default: { name: 'Default', bg: '#2c2c2c', mine: '#206123', theirs: '#215e6d', surface: '#444' },
@@ -397,6 +409,8 @@ async function loadMessages() {
         }
         // Update view-once status
         if (p.viewOnce) updateViewOnceEl(existing, p);
+        // Update reaction strip
+        updateReactionStrip(existing, p.reactions);
       }
     });
 
@@ -507,6 +521,7 @@ function renderMessage(p, otherLastSeen, me, cfg) {
     ${quoteHtml}
     <div class="message-text">${linkify(p.text)}</div>
     ${imageHtml}${statusHtml}
+    <div class="reaction-strip"></div>
   `;
 
   // Delete button (own messages)
@@ -532,7 +547,24 @@ function renderMessage(p, otherLastSeen, me, cfg) {
   rBtn.textContent = cfg.replyButton || '↩';
   div.appendChild(rBtn);
 
+  updateReactionStrip(div, p.reactions);
+
   return div;
+}
+
+// ── Reaction strip renderer ────────────────────────────────────────────────────
+
+function updateReactionStrip(msgEl, reactions) {
+  const strip = msgEl.querySelector('.reaction-strip');
+  if (!strip) return;
+  if (!reactions || reactions.length === 0) { strip.innerHTML = ''; return; }
+  strip.innerHTML = reactions.map(r => {
+    const count   = r.users.length;
+    const isMine  = currentUser && r.users.includes(currentUser);
+    const safeEmoji = escapeHtml(r.emoji);
+    const label   = count > 1 ? `${safeEmoji} ${count}` : safeEmoji;
+    return `<span class="reaction-chip${isMine ? ' mine' : ''}" data-emoji="${safeEmoji}">${label}</span>`;
+  }).join('');
 }
 
 function updateViewOnceEl(existing, p) {
@@ -812,6 +844,7 @@ postsContainer.addEventListener('click', async e => {
   const replyBtn  = e.target.closest('.reply-btn');
   const reportBtn = e.target.closest('.report-btn');
   const quotedMsg = e.target.closest('.quoted-msg');
+  const chipEl    = e.target.closest('.reaction-chip');
   const postDiv   = e.target.closest('.post');
 
   if (cancelBtn) {
@@ -853,6 +886,24 @@ postsContainer.addEventListener('click', async e => {
   } else if (replyBtn && postDiv) {
     e.stopPropagation();
     setReply(postDiv.dataset.user, postDiv.dataset.text || (postDiv.dataset.imagepath ? 'Photo' : ''), postDiv.dataset.id);
+  } else if (chipEl && postDiv) {
+    e.stopPropagation();
+    const emoji = chipEl.dataset.emoji;
+    const msgId = postDiv.dataset.id;
+    if (chipEl.classList.contains('mine')) {
+      await apiFetch(`/api/messages/${msgId}/react`, {
+        method:  'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ emoji }),
+      }).catch(() => {});
+    } else {
+      await apiFetch(`/api/messages/${msgId}/react`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ emoji }),
+      }).catch(() => {});
+    }
+    loadMessages();
   } else if (quotedMsg) {
     e.stopPropagation();
     scrollToMessage(quotedMsg.dataset.replyid, quotedMsg);
@@ -903,6 +954,86 @@ postsContainer.addEventListener('touchend', () => {
   swipeTarget.style.transform = 'translateX(0)';
   swipeTarget.classList.remove('swiping-right');
   swipeTarget = null; startX = 0; currentX = 0;
+});
+
+// ── Long-press to open reaction picker (touch) ────────────────────────────────
+
+postsContainer.addEventListener('touchstart', e => {
+  const postDiv = e.target.closest('.post');
+  if (!postDiv || postDiv.classList.contains('pending-msg')) return;
+  if (e.target.closest('button, a, .chat-img, video, .view-once')) return;
+  lpTarget = postDiv;
+  lpStartX = e.touches[0].clientX;
+  lpStartY = e.touches[0].clientY;
+  lpMoved  = false;
+  lpTimer  = setTimeout(() => {
+    lpTimer = null;
+    if (!lpMoved && lpTarget) {
+      if (navigator.vibrate) navigator.vibrate(40);
+      showReactionPicker(lpTarget, lpStartX, lpStartY);
+    }
+    lpTarget = null;
+  }, 500);
+}, { passive: true });
+
+postsContainer.addEventListener('touchmove', e => {
+  if (!lpTimer && !lpTarget) return;
+  const dx = e.touches[0].clientX - lpStartX;
+  const dy = e.touches[0].clientY - lpStartY;
+  if (Math.sqrt(dx * dx + dy * dy) > 10) {
+    clearTimeout(lpTimer);
+    lpTimer  = null;
+    lpMoved  = true;
+    lpTarget = null;
+  }
+}, { passive: true });
+
+postsContainer.addEventListener('touchend', () => {
+  if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+  lpTarget = null;
+}, { passive: true });
+
+postsContainer.addEventListener('touchcancel', () => {
+  if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+  lpTarget = null;
+}, { passive: true });
+
+// ── Long-press to open reaction picker (mouse / desktop) ─────────────────────
+
+postsContainer.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  const postDiv = e.target.closest('.post');
+  if (!postDiv || postDiv.classList.contains('pending-msg')) return;
+  if (e.target.closest('button, a, .chat-img, video, .view-once')) return;
+  lpTarget = postDiv;
+  lpStartX = e.clientX;
+  lpStartY = e.clientY;
+  lpMoved  = false;
+  lpTimer  = setTimeout(() => {
+    lpTimer = null;
+    if (!lpMoved && lpTarget) showReactionPicker(lpTarget, lpStartX, lpStartY);
+    lpTarget = null;
+  }, 500);
+});
+
+postsContainer.addEventListener('mousemove', e => {
+  if (!lpTimer && !lpTarget) return;
+  const dx = e.clientX - lpStartX;
+  const dy = e.clientY - lpStartY;
+  if (Math.sqrt(dx * dx + dy * dy) > 5) {
+    clearTimeout(lpTimer); lpTimer = null; lpMoved = true; lpTarget = null;
+  }
+});
+
+postsContainer.addEventListener('mouseup', () => {
+  if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+  lpTarget = null;
+});
+
+// Prevent browser context menu on right-click over a message bubble
+postsContainer.addEventListener('contextmenu', e => {
+  const postDiv = e.target.closest('.post');
+  if (postDiv && !e.target.closest('button, a, .chat-img, video')) e.preventDefault();
 });
 
 // ── Reply helpers ─────────────────────────────────────────────────────────────
@@ -1094,6 +1225,77 @@ document.addEventListener('click', e => {
       !panel.contains(e.target) && e.target !== setBtn && !setBtn.contains(e.target)) {
     panel.style.display = 'none';
   }
+
+  // Dismiss reaction picker on outside click
+  const picker = document.getElementById('reaction-picker');
+  if (picker && picker.classList.contains('visible')) {
+    if (suppressPickerDismiss) {
+      suppressPickerDismiss = false;
+      return;
+    }
+    if (!picker.contains(e.target)) {
+      picker.classList.remove('visible');
+      reactionPickerTarget = null;
+    }
+  }
+});
+
+// ── Reaction picker ───────────────────────────────────────────────────────────
+
+function showReactionPicker(postEl, clientX, clientY) {
+  const picker = document.getElementById('reaction-picker');
+  if (!picker) return;
+
+  reactionPickerTarget  = postEl;
+  suppressPickerDismiss = true;
+
+  // Position picker above the touch/click point, centered horizontally on cursor
+  const pickerW = 320;
+  const pickerH = 64;
+  let left = clientX - pickerW / 2;
+  let top  = clientY - pickerH - 12;
+
+  // Clamp to viewport
+  left = Math.max(8, Math.min(left, window.innerWidth  - pickerW - 8));
+  if (top < 8) top = clientY + 16;
+
+  picker.style.left = left + 'px';
+  picker.style.top  = top  + 'px';
+  picker.classList.add('visible');
+}
+
+document.getElementById('reaction-picker').addEventListener('click', async e => {
+  const emojiEl = e.target.closest('.reaction-picker-emoji');
+  if (!emojiEl || !reactionPickerTarget) return;
+
+  const emoji = emojiEl.dataset.emoji;
+  const msgId = reactionPickerTarget.dataset.id;
+  const picker = document.getElementById('reaction-picker');
+  picker.classList.remove('visible');
+  reactionPickerTarget    = null;
+  suppressPickerDismiss   = false;
+
+  // Check if this user already reacted with this emoji (toggle off) or switch/add
+  const strip = document.querySelector(`.post[data-id="${CSS.escape(msgId)}"] .reaction-strip`);
+  const existingChip = strip
+    ? strip.querySelector(`.reaction-chip.mine[data-emoji="${CSS.escape(emoji)}"]`)
+    : null;
+
+  if (existingChip) {
+    // Remove the reaction
+    await apiFetch(`/api/messages/${msgId}/react`, {
+      method:  'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ emoji }),
+    }).catch(() => {});
+  } else {
+    await apiFetch(`/api/messages/${msgId}/react`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ emoji }),
+    }).catch(() => {});
+  }
+  loadMessages();
 });
 
 function applyColourScheme(name, save = true) {

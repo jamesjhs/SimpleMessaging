@@ -101,6 +101,13 @@ declare global {
 
 // ── API response shapes ───────────────────────────────────────────────────────
 
+export interface DbReaction {
+  message_id: string;
+  user_id:    number;
+  emoji:      string;
+  created_at: number;
+}
+
 export interface ApiPost {
   id:        string;
   user:      string;
@@ -113,6 +120,7 @@ export interface ApiPost {
   replyUser: string | null;
   replyText: string | null;
   replyId:   string | null;
+  reactions: { emoji: string; users: string[] }[];
 }
 
 export interface ApiMessagesResponse {

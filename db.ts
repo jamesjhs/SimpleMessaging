@@ -124,6 +124,14 @@ export async function initDb(): Promise<DB> {
       value TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS message_reactions (
+      message_id TEXT    NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      user_id    INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+      emoji      TEXT    NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (message_id, user_id, emoji)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
     CREATE INDEX IF NOT EXISTS idx_messages_user    ON messages(user_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_exp     ON sessions(expires_at);
@@ -139,6 +147,31 @@ export async function initDb(): Promise<DB> {
   ]) {
     try { db.exec(sql); } catch { /* column already exists – safe to ignore */ }
   }
+
+  // Migrate message_reactions to composite PK (message_id, user_id, emoji) if needed.
+  // The original deployment used (message_id, user_id) which prevented multiple reactions
+  // per user. Drop and recreate the table if the old schema is detected.
+  try {
+    const tableInfo = db.prepare(`PRAGMA table_info(message_reactions)`).all() as Array<{ name: string }>;
+    if (tableInfo.length > 0) {
+      const pkCols = (db.prepare(
+        `SELECT name FROM pragma_table_info('message_reactions') WHERE pk > 0 ORDER BY pk`,
+      ).all() as Array<{ name: string }>).map(r => r.name);
+      if (!pkCols.includes('emoji')) {
+        // Old table with 2-column PK – recreate with correct 3-column PK
+        db.exec(`
+          DROP TABLE message_reactions;
+          CREATE TABLE message_reactions (
+            message_id TEXT    NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+            user_id    INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+            emoji      TEXT    NOT NULL,
+            created_at INTEGER NOT NULL,
+            PRIMARY KEY (message_id, user_id, emoji)
+          );
+        `);
+      }
+    }
+  } catch { /* safe to ignore – table may not exist yet, handled by CREATE TABLE IF NOT EXISTS above */ }
 
   // ── Default settings ──────────────────────────────────────────────────────
   const defaults: Record<string, string> = {
