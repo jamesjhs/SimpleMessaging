@@ -1,0 +1,12 @@
+{
+  "name": "TLS",
+  "short_name": "TLS",
+  "description": "TLS Secure Messaging",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#2c2c2c",
+  "theme_color": "#2c2c2c",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

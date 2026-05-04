@@ -315,6 +315,15 @@ FakesAssemblies/
 .ntvs_analysis.dat
 node_modules/
 
+# TLS application specifics
+data/*.db
+data/*.db-wal
+data/*.db-shm
+.env
+uploads/*
+!uploads/.gitkeep
+dist/
+
 # Visual Studio 6 build log
 *.plg
 

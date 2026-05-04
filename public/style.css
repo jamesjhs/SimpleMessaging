@@ -1,0 +1,456 @@
+/* ── Reset & root variables ──────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+
+:root {
+  --color-bg:      #2c2c2c;
+  --color-mine:    #206123;
+  --color-theirs:  #215e6d;
+  --color-surface: #444;
+}
+
+body {
+  background-color: var(--color-bg);
+  touch-action: auto;
+  color: #ffffff;
+  font-family: sans-serif;
+  max-width: 800px;
+  margin: 1.5rem auto;
+  padding-bottom: 100px;
+  transition: background-color 0.3s;
+}
+
+/* ── Header ────────────────────────────────────────────────────────────── */
+h1#main-title {
+  position: sticky;
+  top: 0;
+  background: var(--color-bg);
+  z-index: 50;
+  margin: 0;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.1rem;
+  border-bottom: 1px solid #444;
+}
+
+#header-logo { width: 28px; height: 28px; object-fit: cover; border-radius: 50%; }
+#header-title { flex: 1; cursor: pointer; user-select: none; }
+
+#status-dot {
+  font-size: 0.9rem;
+  color: #888;
+  transition: color 0.3s;
+}
+#status-dot.online { color: #4caf50; }
+
+#settings-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.4rem;
+  padding: 2px 4px;
+  line-height: 1;
+}
+
+/* ── Posts container ────────────────────────────────────────────────────── */
+#posts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+}
+
+/* ── Message bubble ─────────────────────────────────────────────────────── */
+.post {
+  max-width: 75%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  position: relative;
+  word-break: break-word;
+  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.post.mine   { background: var(--color-mine);   align-self: flex-end;  border-bottom-right-radius: 2px; }
+.post.theirs { background: var(--color-theirs); align-self: flex-start; border-bottom-left-radius: 2px; }
+
+.post-header { font-size: 0.75rem; color: #ddd; display: block; margin-bottom: 3px; }
+.message-text { font-size: 0.95rem; line-height: 1.4; }
+.message-text a { color: #7dd3fc; word-break: break-all; }
+
+/* ── Quoted message ────────────────────────────────────────────────────── */
+.quoted-msg {
+  background: rgba(0,0,0,0.25);
+  border-left: 3px solid #4fc3f7;
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-bottom: 5px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.quoted-user { font-weight: bold; color: #4fc3f7; display: block; margin-bottom: 2px; }
+
+/* ── Media ──────────────────────────────────────────────────────────────── */
+.chat-img {
+  max-width: 200px;
+  max-height: 200px;
+  object-fit: cover;
+  border-radius: 8px;
+  display: block;
+  margin-top: 5px;
+}
+.chat-img.clickable-img { cursor: pointer; }
+.chat-img.blurred-preview { filter: blur(16px); transition: filter 0.3s; }
+video.chat-img { background: #000; width: 200px; height: 200px; }
+
+/* ── View-once ──────────────────────────────────────────────────────────── */
+.view-once { padding: 8px 12px; border-radius: 8px; text-align: center; margin-top: 5px; font-size: 0.9rem; }
+.view-once.active { background: #1565c0; cursor: pointer; }
+.view-once.sent   { background: #444; }
+.view-once.dead   { background: #333; color: #888; }
+.view-once-status { font-size: 0.75rem; color: #aaa; }
+
+/* ── Read status ticks ──────────────────────────────────────────────────── */
+.read-status {
+  display: block;
+  text-align: right;
+  font-size: 0.7rem;
+  color: #aaa;
+  margin-top: 2px;
+}
+.read-status.seen { color: #4fc3f7; }
+
+/* ── Action buttons on bubbles ──────────────────────────────────────────── */
+.delete-btn, .reply-btn, .report-btn {
+  position: absolute;
+  top: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 2px 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  line-height: 1;
+}
+.post:hover .delete-btn,
+.post:hover .reply-btn,
+.post:hover .report-btn { opacity: 1; }
+
+.delete-btn { right: 4px; color: #ff5252; }
+.reply-btn  { right: 28px; color: #aaa; }
+.report-btn { right: 4px; color: #ffaa00; }
+
+/* ── Swipe right visual feedback ────────────────────────────────────────── */
+.post.swiping-right { background: rgba(79,195,247,0.3) !important; }
+
+/* ── Pending (optimistic) bubble ────────────────────────────────────────── */
+.post.pending-msg { opacity: 0.85; }
+.pending-progress-wrap { height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden; margin-top: 4px; }
+.pending-progress-bar  { height: 100%; width: 0%; background: #007bff; transition: width 0.1s; }
+.pending-status-row    { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 0.75rem; color: #aaa; }
+.pending-status-text   { flex: 1; }
+.pending-failed-text   { color: #ff5252; }
+.pending-cancel-btn, .pending-retry-btn, .pending-remove-btn {
+  background: none; border: none; cursor: pointer; color: #aaa; font-size: 0.9rem; padding: 0 2px;
+}
+.pending-retry-btn  { color: #4fc3f7; }
+.pending-remove-btn { color: #ff5252; }
+
+/* ── Typing indicator ───────────────────────────────────────────────────── */
+#typing-indicator {
+  padding: 4px 16px;
+  font-size: 0.8rem;
+  color: #aaa;
+  font-style: italic;
+  min-height: 22px;
+}
+
+/* ── New messages prompt ────────────────────────────────────────────────── */
+#new-message-prompt {
+  display: none;
+  position: fixed;
+  bottom: 90px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #007bff;
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  z-index: 60;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+
+/* ── Jump-to-bottom button ──────────────────────────────────────────────── */
+#jumpToBottom {
+  display: none;
+  position: fixed;
+  bottom: 90px;
+  right: 16px;
+  background: #007bff;
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 40px; height: 40px;
+  font-size: 1.2rem;
+  cursor: pointer;
+  z-index: 60;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+
+/* ── Input form ─────────────────────────────────────────────────────────── */
+form#postForm {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 800px;
+  background: var(--color-bg);
+  border-top: 1px solid #555;
+  padding: 8px;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  z-index: 50;
+}
+
+.input-wrapper {
+  flex: 1;
+  background: var(--color-surface);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+textarea#text {
+  background: transparent;
+  border: none;
+  color: #fff;
+  padding: 10px 12px;
+  font-size: 0.95rem;
+  resize: none;
+  outline: none;
+  font-family: inherit;
+  line-height: 1.4;
+  max-height: 150px;
+  overflow-y: hidden;
+}
+
+/* ── Preview box ─────────────────────────────────────────────────────────── */
+#preview-container {
+  display: none;
+  position: relative;
+  padding: 6px;
+  background: rgba(0,0,0,0.3);
+}
+#preview-img  { max-height: 120px; max-width: 100%; border-radius: 6px; object-fit: cover; }
+#preview-video-text { display: none; padding: 12px; color: #aaa; font-size: 0.9rem; }
+.clear-btn {
+  position: absolute; top: 4px; right: 4px;
+  background: rgba(0,0,0,0.6); color: #fff; border: none;
+  border-radius: 50%; width: 22px; height: 22px; cursor: pointer; font-size: 1rem;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* ── Icon buttons ────────────────────────────────────────────────────────── */
+.icon-btn {
+  background: var(--color-surface);
+  border: none;
+  color: #fff;
+  border-radius: 50%;
+  width: 40px; height: 40px;
+  font-size: 1.1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.icon-btn.post-btn { background: #007bff; }
+.icon-btn.post-btn.is-disabled { background: #555; cursor: not-allowed; }
+.icon-btn:active { opacity: 0.7; }
+
+/* ── Image overlay ───────────────────────────────────────────────────────── */
+#imageOverlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.85);
+  z-index: 200;
+  align-items: center;
+  justify-content: center;
+}
+#imageOverlay img,
+#imageOverlay video { box-shadow: 0 4px 24px rgba(0,0,0,0.8); }
+
+/* ── Video recorder overlay ──────────────────────────────────────────────── */
+#videoRecorderOverlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: #000;
+  z-index: 200;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+#livePreview { width: 100%; max-width: 400px; border-radius: 12px; }
+#recordingTimer { color: #fff; font-size: 1.1rem; display: none; }
+.recorder-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 300px;
+  padding: 0 12px;
+}
+.recorder-btn-center { display: flex; gap: 16px; }
+.recorder-btn-side {
+  background: rgba(255,255,255,0.15);
+  border: none; color: #fff; border-radius: 50%;
+  width: 48px; height: 48px; font-size: 1.3rem; cursor: pointer;
+}
+#recordBtn {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: red; border: 4px solid #fff; cursor: pointer;
+}
+#sendVideoBtn {
+  display: none;
+  background: #007bff; border: none; color: #fff;
+  border-radius: 50%; width: 64px; height: 64px;
+  font-size: 1.5rem; cursor: pointer;
+}
+
+/* ── Settings panel ──────────────────────────────────────────────────────── */
+#settings-panel {
+  display: none;
+  position: fixed;
+  top: 52px;
+  right: 12px;
+  background: #333;
+  border: 1px solid #555;
+  border-radius: 12px;
+  padding: 12px;
+  z-index: 100;
+  min-width: 200px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+}
+#colour-picker-title { font-weight: bold; margin-bottom: 8px; font-size: 0.95rem; }
+.colour-scheme-btn {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; background: transparent; border: 1px solid #555;
+  color: #fff; border-radius: 8px; padding: 6px 10px;
+  cursor: pointer; margin-bottom: 4px; font-size: 0.85rem;
+}
+.colour-scheme-btn:hover, .colour-scheme-btn.active { background: rgba(255,255,255,0.1); border-color: #888; }
+.colour-swatch { display: flex; gap: 3px; }
+.colour-swatch span { width: 14px; height: 14px; border-radius: 50%; display: block; }
+.panel-divider { border: none; border-top: 1px solid #555; margin: 8px 0; }
+.panel-action-btn {
+  display: block; width: 100%; background: transparent; border: none;
+  color: #ddd; text-align: left; padding: 6px 0; cursor: pointer; font-size: 0.9rem;
+}
+.panel-action-btn:hover { color: #fff; }
+#logout-btn {
+  display: block; width: 100%; background: transparent; border: none;
+  color: #ff7070; text-align: left; padding: 6px 0; cursor: pointer; font-size: 0.9rem; margin-top: 4px;
+}
+#logout-btn:hover { color: #ff5252; }
+
+/* ── Upload warning overlay ──────────────────────────────────────────────── */
+#upload-warning-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.7);
+  z-index: 300;
+  align-items: center;
+  justify-content: center;
+}
+#upload-warning-box {
+  background: #333; border-radius: 12px; padding: 20px 24px; text-align: center; max-width: 320px;
+}
+#upload-warning-box p  { margin-bottom: 14px; }
+#upload-warning-box button {
+  background: #555; border: none; color: #fff; border-radius: 8px;
+  padding: 8px 20px; cursor: pointer; font-size: 0.95rem; margin: 0 4px;
+}
+#upload-warning-exit-btn { background: #c0392b !important; }
+
+/* ── Login overlay ───────────────────────────────────────────────────────── */
+#login-overlay {
+  display: flex;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.85);
+  z-index: 400;
+  align-items: center;
+  justify-content: center;
+}
+#login-box {
+  background: #333; border-radius: 16px;
+  padding: 28px 32px; width: 100%; max-width: 360px;
+  display: flex; flex-direction: column; gap: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+#login-logo { width: 64px; height: 64px; object-fit: contain; align-self: center; margin-bottom: 4px; }
+#login-title { text-align: center; font-size: 1.2rem; margin: 0 0 4px; }
+
+#login-box input {
+  background: #444; border: 1px solid #666; border-radius: 8px;
+  color: #fff; padding: 10px 12px; font-size: 1rem; outline: none;
+  text-align: center; width: 100%;
+}
+#login-box input:focus { border-color: #007bff; }
+
+#login-box button {
+  background: #007bff; border: none; color: #fff; border-radius: 8px;
+  padding: 11px; font-size: 1rem; cursor: pointer; width: 100%;
+}
+#login-box button:hover { background: #0056b3; }
+
+.login-error { color: #ff7070; font-size: 0.85rem; min-height: 18px; margin: 0; }
+
+#turnstile-container { min-height: 65px; display: flex; align-items: center; justify-content: center; }
+
+/* ── Change password overlay ─────────────────────────────────────────────── */
+#change-password-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.7);
+  z-index: 350;
+  align-items: center;
+  justify-content: center;
+}
+#change-password-box {
+  background: #333; border-radius: 16px;
+  padding: 24px 28px; width: 100%; max-width: 340px;
+  display: flex; flex-direction: column; gap: 10px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+}
+#change-password-box h3 { margin: 0 0 4px; }
+#change-password-box input {
+  background: #444; border: 1px solid #666; border-radius: 8px;
+  color: #fff; padding: 10px 12px; font-size: 1rem; outline: none;
+}
+#change-password-box input:focus { border-color: #007bff; }
+#change-password-box button {
+  background: #007bff; border: none; color: #fff; border-radius: 8px;
+  padding: 10px; font-size: 0.95rem; cursor: pointer;
+}
+
+/* ── Load-more sentinel ──────────────────────────────────────────────────── */
+#load-more-sentinel { height: 1px; }
+
+/* ── Scrollbar styling ───────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #666; border-radius: 3px; }
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  body { margin: 0; }
+  .post { max-width: 88%; }
+  #login-box { margin: 16px; padding: 20px; }
+}

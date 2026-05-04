@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, interactive-widget=resizes-content">
+  <title>Loading…</title>
+  <link rel="icon" type="image/svg+xml" href="/icon.svg">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── Main chat UI ───────────────────────────────────────────────────── -->
+  <h1 id="main-title">
+    <img src="/icon.svg" alt="Logo" id="header-logo">
+    <span id="header-title"></span>
+    <span id="status-dot" title="Offline">●</span>
+    <button type="button" id="settings-btn" onclick="toggleSettingsPanel()" title="Settings">⚙️</button>
+  </h1>
+
+  <div id="posts">
+    <div id="load-more-sentinel"></div>
+  </div>
+
+  <div id="typing-indicator"></div>
+  <div id="new-message-prompt" onclick="scrollToBottom()">New Messages ↓</div>
+
+  <form id="postForm">
+    <input type="file" id="imageInput"  accept="image/*,video/*" style="display:none">
+    <input type="file" id="videoInput"  accept="video/*" capture="camcorder" style="display:none">
+    <input type="file" id="cameraInput" accept="image/*" capture="camera" style="display:none">
+
+    <div class="input-wrapper">
+      <div id="preview-container">
+        <img id="preview-img" src alt="Preview">
+        <div id="preview-video-text">[ Video ]</div>
+        <button type="button" onclick="clearPreview()" class="clear-btn">×</button>
+      </div>
+
+      <label id="viewOnceLabel" title="View Once" style="cursor:pointer;font-size:1.2rem;display:none;align-items:center;">
+        <input type="checkbox" id="viewOnce" style="margin-right:4px;"> 👁️
+      </label>
+      <label id="blurLabel" title="Blur Preview" style="cursor:pointer;font-size:1.2rem;display:none;align-items:center;">
+        <input type="checkbox" id="blurInput" style="margin-right:4px;"> 🎭
+      </label>
+
+      <div id="upload-progress-container" style="display:none;padding:5px;background:transparent;">
+        <div id="upload-progress-bar" style="height:4px;width:0%;background:#007bff;transition:width 0.1s;"></div>
+      </div>
+
+      <div id="reply-preview-container" style="display:none;background:#3a3a3a;padding:8px;border-bottom:1px solid #555;position:relative;">
+        <div id="reply-info" style="font-size:0.75rem;color:#4fc3f7;margin-bottom:4px;"></div>
+        <div id="reply-text-preview" style="font-size:0.85rem;color:#bbb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+        <button type="button" onclick="cancelReply()" style="position:absolute;right:8px;top:8px;background:none;border:none;color:#ff5252;cursor:pointer;">✕</button>
+      </div>
+
+      <textarea id="text" rows="1" placeholder="Type a message…"></textarea>
+    </div>
+
+    <div id="media-options" style="display:flex;gap:5px;">
+      <button type="button" class="icon-btn" onclick="document.getElementById('imageInput').click()">📎</button>
+      <button type="button" class="icon-btn" onclick="document.getElementById('cameraInput').click()">📷</button>
+      <button type="button" class="icon-btn" onclick="openRecorder()">🎥</button>
+    </div>
+    <button type="button" id="plus-btn" class="icon-btn"
+      style="display:none;font-size:1.8rem;font-weight:bold;padding:0 15px;"
+      onmousedown="showAttachments(event)">+</button>
+
+    <button type="submit" class="icon-btn post-btn is-disabled" disabled>➤</button>
+  </form>
+
+  <!-- ── Image / video overlay ─────────────────────────────────────────── -->
+  <div id="imageOverlay" onclick="closeImagePopup()">
+    <img id="overlayImg" style="max-width:90%;max-height:90%;border-radius:8px;">
+    <video id="overlayVideo" controls controlsList="nodownload" oncontextmenu="return false"
+      playsinline style="max-width:90%;max-height:90%;border-radius:8px;display:none;"></video>
+  </div>
+
+  <!-- ── In-app video recorder ─────────────────────────────────────────── -->
+  <div id="videoRecorderOverlay">
+    <div id="recordingTimer">🔴 00:00</div>
+    <video id="livePreview" autoplay playsinline muted></video>
+    <div class="recorder-controls">
+      <button type="button" class="recorder-btn-side" onclick="closeRecorder()">✕</button>
+      <div class="recorder-btn-center">
+        <button id="recordBtn" type="button" onclick="toggleRecording()"></button>
+        <button id="sendVideoBtn" type="button" onclick="finishRecording()">➤</button>
+      </div>
+      <button type="button" class="recorder-btn-side" onclick="flipCamera()">🔄</button>
+    </div>
+  </div>
+
+  <button id="jumpToBottom" onclick="scrollToBottom()" title="Jump to bottom">↓</button>
+
+  <!-- ── Settings panel ────────────────────────────────────────────────── -->
+  <div id="settings-panel">
+    <div id="colour-picker-title">Settings</div>
+
+    <div style="font-size:0.8rem;color:#aaa;padding:4px 0 8px;">Colour Scheme</div>
+    <button class="colour-scheme-btn" data-scheme="default" onclick="applyColourScheme('default')">
+      <div class="colour-swatch"><span style="background:#2c2c2c"></span><span style="background:#206123"></span><span style="background:#215e6d"></span></div>Default
+    </button>
+    <button class="colour-scheme-btn" data-scheme="ocean" onclick="applyColourScheme('ocean')">
+      <div class="colour-swatch"><span style="background:#1a2a3a"></span><span style="background:#1a4f6e"></span><span style="background:#0d4d4d"></span></div>Ocean
+    </button>
+    <button class="colour-scheme-btn" data-scheme="purple" onclick="applyColourScheme('purple')">
+      <div class="colour-swatch"><span style="background:#1e1a2e"></span><span style="background:#533483"></span><span style="background:#0f3460"></span></div>Purple
+    </button>
+    <button class="colour-scheme-btn" data-scheme="warm" onclick="applyColourScheme('warm')">
+      <div class="colour-swatch"><span style="background:#2a1f0a"></span><span style="background:#7c4500"></span><span style="background:#5c3d02"></span></div>Warm
+    </button>
+    <button class="colour-scheme-btn" data-scheme="forest" onclick="applyColourScheme('forest')">
+      <div class="colour-swatch"><span style="background:#0d1f0d"></span><span style="background:#1b5e20"></span><span style="background:#003d33"></span></div>Forest
+    </button>
+
+    <hr class="panel-divider">
+
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 0;font-size:0.9rem;">
+      <input type="checkbox" id="enter-to-send-toggle" onchange="toggleEnterToSend(this.checked)"> ⏎ Enter to Send
+    </label>
+
+    <hr class="panel-divider">
+
+    <button class="panel-action-btn" onclick="showChangePasswordDialog()">🔑 Change Password</button>
+    <button id="admin-panel-btn" class="panel-action-btn" onclick="window.location.href='/admin'" style="display:none;">🛠 Admin Panel</button>
+
+    <hr class="panel-divider">
+    <button id="logout-btn" onclick="logout()">🚪 Logout</button>
+  </div>
+
+  <!-- ── Upload in-progress warning ────────────────────────────────────── -->
+  <div id="upload-warning-overlay">
+    <div id="upload-warning-box">
+      <p id="upload-warning-msg">⚠️ An upload is in progress.<br>Are you sure you want to leave?</p>
+      <button type="button" id="upload-warning-stay-btn" onclick="hideUploadWarning()">Stay</button>
+      <button type="button" id="upload-warning-exit-btn" style="display:none;" onclick="emergencyExitNow()">Exit now</button>
+    </div>
+  </div>
+
+  <!-- ── Login overlay ─────────────────────────────────────────────────── -->
+  <div id="login-overlay">
+    <div id="login-box">
+      <img src="/icon.svg" alt="Site logo" id="login-logo">
+      <h2 id="login-title">Sign In</h2>
+
+      <!-- Step 1: credentials -->
+      <div id="login-step-credentials">
+        <input type="text"     id="login-username" placeholder="Username" autocomplete="username">
+        <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
+        <div id="turnstile-container"></div>
+        <p id="login-error" class="login-error"></p>
+        <button type="button" id="login-btn" onclick="attemptLogin()">Sign In</button>
+      </div>
+
+      <!-- Step 2: OTP -->
+      <div id="login-step-otp" style="display:none;">
+        <p style="color:#aaa;font-size:0.9rem;">A verification code has been sent to your email.</p>
+        <input type="text" id="login-otp" placeholder="6-digit code" maxlength="6" autocomplete="one-time-code" inputmode="numeric">
+        <p id="otp-error" class="login-error"></p>
+        <button type="button" onclick="verifyOtp()">Verify</button>
+      </div>
+
+      <!-- Step 3: force password change -->
+      <div id="login-step-change-password" style="display:none;">
+        <p style="color:#ffcc00;font-size:0.9rem;">⚠️ You must set a new password before continuing.</p>
+        <input type="password" id="new-password"     placeholder="New password (min 8 chars)" autocomplete="new-password">
+        <input type="password" id="confirm-password" placeholder="Confirm new password"        autocomplete="new-password">
+        <p id="cp-error" class="login-error"></p>
+        <button type="button" onclick="submitNewPassword()">Set Password</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Change password dialog (in-app) ────────────────────────────────── -->
+  <div id="change-password-overlay" style="display:none;">
+    <div id="change-password-box">
+      <h3>Change Password</h3>
+      <input type="password" id="cp-current"  placeholder="Current password" autocomplete="current-password">
+      <input type="password" id="cp-new"      placeholder="New password (min 8 chars)" autocomplete="new-password">
+      <input type="password" id="cp-confirm"  placeholder="Confirm new password" autocomplete="new-password">
+      <p id="cp-inline-error" class="login-error"></p>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button type="button" onclick="submitChangePassword()">Save</button>
+        <button type="button" onclick="hideChangePasswordDialog()" style="background:#555;">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
