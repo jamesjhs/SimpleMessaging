@@ -130,6 +130,15 @@ export async function initDb(): Promise<DB> {
     CREATE INDEX IF NOT EXISTS idx_otp_user         ON otp_tokens(user_id);
   `);
 
+  // ── Column migrations (ALTER TABLE is idempotent via try/catch) ───────────
+  for (const sql of [
+    `ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE users ADD COLUMN locked_until          INTEGER`,
+    `ALTER TABLE users ADD COLUMN login_locked          INTEGER NOT NULL DEFAULT 0`,
+  ]) {
+    try { db.exec(sql); } catch { /* column already exists – safe to ignore */ }
+  }
+
   // ── Default settings ──────────────────────────────────────────────────────
   const defaults: Record<string, string> = {
     pwa_enabled:            '0',

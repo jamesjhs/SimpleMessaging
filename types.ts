@@ -17,6 +17,9 @@ export interface DbUser {
   enabled:               0 | 1;
   created_at:            number;
   last_seen:             number | null;
+  failed_login_attempts: number;
+  locked_until:          number | null;
+  login_locked:          0 | 1;
 }
 
 export interface DbSession {
