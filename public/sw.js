@@ -1,7 +1,7 @@
 'use strict';
 
-const CACHE_NAME  = 'tls-v1';
-const SHELL_URLS  = ['/', '/style.css', '/script.js', '/favicon.ico'];
+const CACHE_NAME  = 'tls-__APP_VERSION__'; // replaced with the real version by the server at runtime
+const SHELL_URLS  = ['/', '/style.css', '/script.js', '/icon.svg'];
 
 self.addEventListener('install', event => {
   event.waitUntil(

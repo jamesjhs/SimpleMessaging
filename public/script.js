@@ -1126,6 +1126,9 @@ function activateEmergencyExit() {
 }
 
 function emergencyExitNow() {
+  // Invalidate the session server-side before navigating away.
+  // keepalive ensures the request completes even as the page unloads.
+  fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin', keepalive: true }).catch(() => {});
   document.body.style.backgroundColor = '#ffffff';
   document.body.innerHTML = '';
   window.location.href = 'https://www.google.com/search?q=cromer+weather+forecast';
@@ -1334,9 +1337,23 @@ function linkify(text) {
 // ── PWA registration ──────────────────────────────────────────────────────────
 
 function registerServiceWorker() {
-  if ('serviceWorker' in navigator && appConfig.pwaEnabled) {
-    navigator.serviceWorker.register('/sw.js').catch(e => console.warn('[sw]', e.message));
-  }
+  if (!('serviceWorker' in navigator) || !appConfig.pwaEnabled) return;
+  navigator.serviceWorker.register('/sw.js').then(reg => {
+    // Poll for updates every 60 s so long-lived sessions pick up new deploys
+    setInterval(() => reg.update().catch(() => {}), 60_000);
+
+    reg.addEventListener('updatefound', () => {
+      const sw = reg.installing;
+      if (!sw) return;
+      sw.addEventListener('statechange', () => {
+        // A new SW has been installed and is waiting to take over.
+        // Reload automatically so users always run the latest version.
+        if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+          window.location.reload();
+        }
+      });
+    });
+  }).catch(e => console.warn('[sw]', e.message));
 }
 
 // ── Main init ─────────────────────────────────────────────────────────────────

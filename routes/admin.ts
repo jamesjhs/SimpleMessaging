@@ -229,6 +229,8 @@ interface LegacyPost {
   replyUser?: string;
   replyText?: string;
   createdAt?: number;
+  /** Display names of users who have already viewed this view-once message */
+  seenBy?:    string[];
 }
 
 router.post('/import', jsonUp.single('file'), async (req: Request, res: Response): Promise<void> => {
@@ -249,14 +251,14 @@ router.post('/import', jsonUp.single('file'), async (req: Request, res: Response
   let skipped     = 0;
   const created:  Array<{ displayName: string; username: string; temporaryPassword: string }> = [];
 
-  // Pre-load existing users
+  // Pre-load existing users — trim + lowercase for robust matching
   (db.prepare('SELECT id, display_name FROM users').all() as Array<{ id: number; display_name: string }>)
-    .forEach(u => userCache.set(u.display_name.toLowerCase(), u.id));
+    .forEach(u => userCache.set(u.display_name.trim().toLowerCase(), u.id));
 
   for (const p of posts) {
     if (!p?.user) { skipped++; continue; }
 
-    const nameKey = p.user.toLowerCase();
+    const nameKey = p.user.trim().toLowerCase();
     let userId    = userCache.get(nameKey);
 
     if (!userId) {
@@ -312,6 +314,22 @@ router.post('/import', jsonUp.single('file'), async (req: Request, res: Response
         p.createdAt  ?? null,
       );
       imported++;
+
+      // Restore view-once seen state: insert a message_views row for every
+      // user listed in seenBy so the recipient sees the "already viewed" UI.
+      if (p.viewOnce && Array.isArray(p.seenBy) && p.seenBy.length > 0) {
+        for (const viewerName of p.seenBy) {
+          const viewerKey    = viewerName.trim().toLowerCase();
+          const viewerUserId = userCache.get(viewerKey);
+          if (viewerUserId) {
+            try {
+              db.prepare(
+                'INSERT OR IGNORE INTO message_views (message_id, user_id, viewed_at) VALUES (?, ?, ?)',
+              ).run(msgId, viewerUserId, p.createdAt ?? Date.now());
+            } catch { /* ignore */ }
+          }
+        }
+      }
     } catch (err) {
       console.warn('[import] failed row:', (err as Error).message);
       skipped++;

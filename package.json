@@ -1,6 +1,6 @@
 {
   "name": "tls",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "TLS Secure Messaging – encrypted two-person chat",
   "main": "server.ts",
   "type": "commonjs",

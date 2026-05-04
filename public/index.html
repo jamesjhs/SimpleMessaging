@@ -4,13 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, interactive-widget=resizes-content">
   <title>Loading…</title>
+  <link rel="icon" type="image/svg+xml" href="/icon.svg">
+  <link rel="apple-touch-icon" href="/icon.svg">
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
   <!-- ── Main chat UI ───────────────────────────────────────────────────── -->
   <h1 id="main-title">
-    <img src="favicon.ico" alt="Logo" id="header-logo">
+    <img src="/icon.svg" alt="Logo" id="header-logo">
     <span id="header-title"></span>
     <span id="status-dot" title="Offline">●</span>
     <button type="button" id="settings-btn" onclick="toggleSettingsPanel()" title="Settings">⚙️</button>
@@ -138,7 +140,7 @@
   <!-- ── Login overlay ─────────────────────────────────────────────────── -->
   <div id="login-overlay">
     <div id="login-box">
-      <img src="favicon.ico" alt="Site logo" id="login-logo">
+      <img src="/icon.svg" alt="Site logo" id="login-logo">
       <h2 id="login-title">Sign In</h2>
 
       <!-- Step 1: credentials -->
