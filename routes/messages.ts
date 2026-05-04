@@ -419,9 +419,16 @@ router.post('/messages/:id/react', requireAuth, (req: Request, res: Response): v
 // ── DELETE /api/messages/:id/react ───────────────────────────────────────────
 
 router.delete('/messages/:id/react', requireAuth, (req: Request, res: Response): void => {
+  const { emoji } = req.body as { emoji?: string };
+
+  if (!emoji || typeof emoji !== 'string' || !ALLOWED_REACTION_EMOJIS.has(emoji)) {
+    res.status(400).json({ error: 'Valid emoji required' });
+    return;
+  }
+
   getDb().prepare(
-    'DELETE FROM message_reactions WHERE message_id = ? AND user_id = ?',
-  ).run(req.params.id, req.user!.id);
+    'DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?',
+  ).run(req.params.id, req.user!.id, emoji);
 
   res.sendStatus(204);
 });

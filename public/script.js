@@ -890,7 +890,11 @@ postsContainer.addEventListener('click', async e => {
     const emoji = chipEl.dataset.emoji;
     const msgId = postDiv.dataset.id;
     if (chipEl.classList.contains('mine')) {
-      await apiFetch(`/api/messages/${msgId}/react`, { method: 'DELETE' }).catch(() => {});
+      await apiFetch(`/api/messages/${msgId}/react`, {
+        method:  'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ emoji }),
+      }).catch(() => {});
     } else {
       await apiFetch(`/api/messages/${msgId}/react`, {
         method:  'POST',
@@ -1012,7 +1016,7 @@ postsContainer.addEventListener('mousedown', e => {
 });
 
 postsContainer.addEventListener('mousemove', e => {
-  if (!lpTimer) return;
+  if (!lpTimer && !lpTarget) return;
   const dx = e.clientX - lpStartX;
   const dy = e.clientY - lpStartY;
   if (Math.sqrt(dx * dx + dy * dy) > 5) {
@@ -1275,7 +1279,11 @@ document.getElementById('reaction-picker').addEventListener('click', async e => 
 
   if (existingChip) {
     // Remove the reaction
-    await apiFetch(`/api/messages/${msgId}/react`, { method: 'DELETE' }).catch(() => {});
+    await apiFetch(`/api/messages/${msgId}/react`, {
+      method:  'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ emoji }),
+    }).catch(() => {});
   } else {
     await apiFetch(`/api/messages/${msgId}/react`, {
       method:  'POST',
