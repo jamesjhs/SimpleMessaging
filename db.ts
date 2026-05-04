@@ -124,6 +124,14 @@ export async function initDb(): Promise<DB> {
       value TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS message_reactions (
+      message_id TEXT    NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      user_id    INTEGER NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+      emoji      TEXT    NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (message_id, user_id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
     CREATE INDEX IF NOT EXISTS idx_messages_user    ON messages(user_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_exp     ON sessions(expires_at);

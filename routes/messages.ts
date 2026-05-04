@@ -49,6 +49,21 @@ function rowToPost(row: DbMessage): ApiPost {
     WHERE mv.message_id = ? AND u.role != 'admin'
   `).all(row.id) as Array<{ display_name: string }>).map(r => r.display_name);
 
+  const reactionRows = db.prepare(`
+    SELECT r.emoji, u.display_name FROM message_reactions r
+    JOIN users u ON u.id = r.user_id
+    WHERE r.message_id = ?
+    ORDER BY r.created_at
+  `).all(row.id) as Array<{ emoji: string; display_name: string }>;
+
+  const reactionsMap = new Map<string, string[]>();
+  for (const r of reactionRows) {
+    const users = reactionsMap.get(r.emoji) ?? [];
+    users.push(r.display_name);
+    reactionsMap.set(r.emoji, users);
+  }
+  const reactions = [...reactionsMap.entries()].map(([emoji, users]) => ({ emoji, users }));
+
   return {
     id:        row.id,
     user:      row.display_name ?? '',
@@ -61,6 +76,7 @@ function rowToPost(row: DbMessage): ApiPost {
     replyUser: row.reply_user  ?? null,
     replyText: row.reply_text  ?? null,
     replyId:   row.reply_to_id ?? null,
+    reactions,
   };
 }
 
@@ -365,6 +381,47 @@ router.post('/preferences', requireAuth, (req: Request, res: Response): void => 
       'INSERT INTO user_preferences (user_id, colour_scheme, enter_to_send, font_size, updated_at) VALUES (?, ?, ?, ?, ?)',
     ).run(req.user!.id, scheme ?? 'default', enterToSend ? 1 : 0, fontSize !== undefined ? Math.round(Number(fontSize)) : null, now);
   }
+
+  res.sendStatus(204);
+});
+
+// ── POST /api/messages/:id/react ─────────────────────────────────────────────
+
+const ALLOWED_REACTION_EMOJIS = new Set(['👍', '❤️', '😂', '😮', '😢', '👏', '🔥', '😡']);
+
+router.post('/messages/:id/react', requireAuth, (req: Request, res: Response): void => {
+  const { emoji } = req.body as { emoji?: string };
+
+  if (!emoji || typeof emoji !== 'string') {
+    res.status(400).json({ error: 'emoji required' });
+    return;
+  }
+  if (!ALLOWED_REACTION_EMOJIS.has(emoji)) {
+    res.status(400).json({ error: 'Invalid emoji' });
+    return;
+  }
+
+  const db  = getDb();
+  const msg = db.prepare(
+    'SELECT id FROM messages WHERE id = ? AND deleted_at IS NULL',
+  ).get(req.params.id) as { id: string } | undefined;
+
+  if (!msg) { res.sendStatus(404); return; }
+
+  db.prepare(`
+    INSERT OR REPLACE INTO message_reactions (message_id, user_id, emoji, created_at)
+    VALUES (?, ?, ?, ?)
+  `).run(req.params.id, req.user!.id, emoji, Date.now());
+
+  res.sendStatus(204);
+});
+
+// ── DELETE /api/messages/:id/react ───────────────────────────────────────────
+
+router.delete('/messages/:id/react', requireAuth, (req: Request, res: Response): void => {
+  getDb().prepare(
+    'DELETE FROM message_reactions WHERE message_id = ? AND user_id = ?',
+  ).run(req.params.id, req.user!.id);
 
   res.sendStatus(204);
 });
