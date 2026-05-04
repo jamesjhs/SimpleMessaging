@@ -46,7 +46,7 @@ function rowToPost(row: DbMessage): ApiPost {
   const seenBy = (db.prepare(`
     SELECT u.display_name FROM message_views mv
     JOIN users u ON u.id = mv.user_id
-    WHERE mv.message_id = ?
+    WHERE mv.message_id = ? AND u.role != 'admin'
   `).all(row.id) as Array<{ display_name: string }>).map(r => r.display_name);
 
   return {
@@ -102,7 +102,7 @@ router.get('/messages', requireAuth, (req: Request, res: Response): void => {
   const db  = getDb();
   const now = Date.now();
 
-  if (req.query.active !== 'false') {
+  if (req.query.active !== 'false' && req.user!.role !== 'admin') {
     db.prepare('UPDATE users SET last_seen = ? WHERE id = ?').run(now, req.user!.id);
   }
 
@@ -129,7 +129,7 @@ router.get('/messages', requireAuth, (req: Request, res: Response): void => {
       `).all(limit) as DbMessage[]).reverse();
 
   const userRows = db.prepare(
-    'SELECT display_name, last_seen FROM users WHERE last_seen IS NOT NULL',
+    `SELECT display_name, last_seen FROM users WHERE last_seen IS NOT NULL AND role != 'admin'`,
   ).all() as Array<{ display_name: string; last_seen: number }>;
 
   const lastSeen: Record<string, number> = {};
@@ -294,6 +294,10 @@ router.post('/messages/:id/report', requireAuth, (req: Request, res: Response): 
 // ── POST /api/typing ──────────────────────────────────────────────────────────
 
 router.post('/typing', requireAuth, (req: Request, res: Response): void => {
+  if (req.user!.role === 'admin') {
+    res.sendStatus(204);
+    return;
+  }
   const { isTyping } = req.body as { isTyping?: boolean };
   if (isTyping) typingUsers.set(req.user!.display_name, Date.now());
   else          typingUsers.delete(req.user!.display_name);
