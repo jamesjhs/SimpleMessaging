@@ -72,6 +72,7 @@ export interface DbUserPreferences {
   user_id:       number;
   colour_scheme: string | null;
   enter_to_send: 0 | 1;
+  font_size:     number | null;
   updated_at:    number | null;
 }
 

@@ -325,6 +325,7 @@ async function loadPreferences() {
     enterToSend = !!data.enterToSend;
     const toggle = document.getElementById('enter-to-send-toggle');
     if (toggle) toggle.checked = enterToSend;
+    if (data.fontSize != null) applyFontSize(data.fontSize, false);
   } catch (e) {
     console.warn('[prefs] could not load:', e.message);
   }
@@ -1109,6 +1110,20 @@ function applyColourScheme(name, save = true) {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ scheme: name }),
+    }).catch(e => console.warn('[prefs] save failed:', e.message));
+  }
+}
+
+function applyFontSize(size, save = true) {
+  const px = Math.min(24, Math.max(11, Math.round(size)));
+  document.documentElement.style.setProperty('--chat-font-size', px + 'px');
+  const slider = document.getElementById('font-size-slider');
+  if (slider) slider.value = String(px);
+  if (save) {
+    apiFetch('/api/preferences', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ fontSize: px }),
     }).catch(e => console.warn('[prefs] save failed:', e.message));
   }
 }

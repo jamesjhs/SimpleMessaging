@@ -121,6 +121,17 @@
 
     <hr class="panel-divider">
 
+    <div style="font-size:0.8rem;color:#aaa;padding:2px 0 6px;">Font Size</div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span style="font-size:0.8rem;line-height:1;">A</span>
+      <input type="range" id="font-size-slider" min="11" max="24" step="1" value="15"
+        oninput="applyFontSize(+this.value)" onchange="applyFontSize(+this.value)"
+        style="flex:1;accent-color:#007bff;">
+      <span style="font-size:1.2rem;line-height:1;">A</span>
+    </div>
+
+    <hr class="panel-divider">
+
     <button class="panel-action-btn" onclick="showChangePasswordDialog()">🔑 Change Password</button>
     <button id="admin-panel-btn" class="panel-action-btn" onclick="window.location.href='/admin'" style="display:none;">🛠 Admin Panel</button>
 

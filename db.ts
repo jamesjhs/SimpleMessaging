@@ -135,6 +135,7 @@ export async function initDb(): Promise<DB> {
     `ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE users ADD COLUMN locked_until          INTEGER`,
     `ALTER TABLE users ADD COLUMN login_locked          INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE user_preferences ADD COLUMN font_size  INTEGER`,
   ]) {
     try { db.exec(sql); } catch { /* column already exists – safe to ignore */ }
   }
