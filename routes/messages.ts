@@ -319,21 +319,31 @@ router.post('/typing', requireAuth, (req: Request, res: Response): void => {
 router.get('/preferences', requireAuth, (req: Request, res: Response): void => {
   const db  = getDb();
   const row = db.prepare('SELECT * FROM user_preferences WHERE user_id = ?')
-    .get(req.user!.id) as { colour_scheme: string | null; enter_to_send: 0 | 1 } | undefined;
+    .get(req.user!.id) as { colour_scheme: string | null; enter_to_send: 0 | 1; font_size: number | null } | undefined;
 
   res.json({
     scheme:      row?.colour_scheme ?? 'default',
     enterToSend: row?.enter_to_send === 1,
+    fontSize:    row?.font_size ?? 15,
   });
 });
 
 // ── POST /api/preferences ─────────────────────────────────────────────────────
 
 router.post('/preferences', requireAuth, (req: Request, res: Response): void => {
-  const { scheme, enterToSend } = req.body as {
+  const { scheme, enterToSend, fontSize } = req.body as {
     scheme?:      string;
     enterToSend?: boolean;
+    fontSize?:    number;
   };
+
+  if (fontSize !== undefined) {
+    const size = Math.round(Number(fontSize));
+    if (!Number.isFinite(size) || size < 11 || size > 24) {
+      res.status(400).json({ error: 'fontSize must be an integer between 11 and 24' });
+      return;
+    }
+  }
 
   const db  = getDb();
   const now = Date.now();
@@ -344,6 +354,7 @@ router.post('/preferences', requireAuth, (req: Request, res: Response): void => 
     const vals:    unknown[] = [];
     if (scheme      !== undefined) { updates.push('colour_scheme = ?'); vals.push(String(scheme)); }
     if (enterToSend !== undefined) { updates.push('enter_to_send = ?'); vals.push(enterToSend ? 1 : 0); }
+    if (fontSize    !== undefined) { updates.push('font_size = ?');     vals.push(Math.round(Number(fontSize))); }
     if (updates.length > 0) {
       updates.push('updated_at = ?');
       vals.push(now, req.user!.id);
@@ -351,8 +362,8 @@ router.post('/preferences', requireAuth, (req: Request, res: Response): void => 
     }
   } else {
     db.prepare(
-      'INSERT INTO user_preferences (user_id, colour_scheme, enter_to_send, updated_at) VALUES (?, ?, ?, ?)',
-    ).run(req.user!.id, scheme ?? 'default', enterToSend ? 1 : 0, now);
+      'INSERT INTO user_preferences (user_id, colour_scheme, enter_to_send, font_size, updated_at) VALUES (?, ?, ?, ?, ?)',
+    ).run(req.user!.id, scheme ?? 'default', enterToSend ? 1 : 0, fontSize !== undefined ? Math.round(Number(fontSize)) : null, now);
   }
 
   res.sendStatus(204);

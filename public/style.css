@@ -6,6 +6,7 @@
   --color-mine:    #206123;
   --color-theirs:  #215e6d;
   --color-surface: #444;
+  --chat-font-size: 15px;
 }
 
 body {
@@ -74,7 +75,7 @@ h1#main-title {
 .post.theirs { background: var(--color-theirs); align-self: flex-start; border-bottom-left-radius: 2px; }
 
 .post-header { font-size: 0.75rem; color: #ddd; display: block; margin-bottom: 3px; }
-.message-text { font-size: 0.95rem; line-height: 1.4; }
+.message-text { font-size: var(--chat-font-size); line-height: 1.4; }
 .message-text a { color: #7dd3fc; word-break: break-all; }
 
 /* ── Quoted message ────────────────────────────────────────────────────── */
