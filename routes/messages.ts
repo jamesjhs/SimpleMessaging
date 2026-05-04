@@ -92,6 +92,7 @@ router.get('/config', (_req: Request, res: Response): void => {
     enableReport:        getSetting('report_enabled')        === '1',
     pwaEnabled:          getSetting('pwa_enabled')           === '1',
     turnstileSiteKey:    process.env.TURNSTILE_SITE_KEY      ?? null,
+    chatIconUrl:         getSetting('chat_icon_url')         ?? null,
   });
 });
 

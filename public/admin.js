@@ -254,6 +254,12 @@ async function loadSettings() {
     if (el.type === 'checkbox') el.checked = val === '1' || val === 'true';
     else el.value = val ?? '';
   });
+
+  // Update icon preview
+  if (s.chat_icon_url) {
+    const preview = document.getElementById('icon-preview');
+    if (preview) preview.src = s.chat_icon_url + '?t=' + Date.now();
+  }
 }
 
 async function saveSettings(e) {
@@ -286,13 +292,14 @@ async function saveSettings(e) {
   }
 }
 
-// ── Import ────────────────────────────────────────────────────────────────────
+// ── Import (two-step: preview → commit) ───────────────────────────────────────
 
-async function doImport(e) {
+let importPreviewToken  = null;
+let importExistingUsers = [];
+
+async function previewImport(e) {
   e.preventDefault();
   setError('import-error', '');
-  document.getElementById('import-result').textContent = '';
-  document.getElementById('created-users-section').style.display = 'none';
 
   const file = document.getElementById('import-file').files[0];
   if (!file) return;
@@ -300,13 +307,61 @@ async function doImport(e) {
   const form = new FormData();
   form.append('file', file);
 
-  const res  = await apiFetch('/api/admin/import', { method: 'POST', body: form });
+  const res  = await apiFetch('/api/admin/import/preview', { method: 'POST', body: form });
   const data = await res.json().catch(() => ({}));
 
-  if (!res.ok) { setError('import-error', data.error || 'Import failed.'); return; }
+  if (!res.ok) { setError('import-error', data.error || 'Preview failed.'); return; }
+
+  importPreviewToken  = data.previewToken;
+  importExistingUsers = data.existingUsers || [];
+
+  // Build the assignment table
+  const tbody = document.getElementById('import-mapping-tbody');
+  tbody.innerHTML = '';
+  (data.uniqueNames || []).forEach(entry => {
+    const tr = document.createElement('tr');
+    const opts = importExistingUsers.map(u =>
+      `<option value="${u.id}"${u.id === entry.suggestedUserId ? ' selected' : ''}>${esc(u.display_name)} (${esc(u.username)})</option>`
+    ).join('');
+    tr.innerHTML = `
+      <td>${esc(entry.name)}</td>
+      <td>
+        <select class="import-user-select" data-name="${esc(entry.name)}">
+          <option value="">— Auto-create new account —</option>
+          ${opts}
+        </select>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('import-preview-count').textContent =
+    `${data.postCount} message(s) found · ${(data.uniqueNames || []).length} unique name(s) identified`;
+
+  document.getElementById('import-step-1').style.display = 'none';
+  document.getElementById('import-step-2').style.display = 'block';
+}
+
+async function commitImport() {
+  setError('import-error-2', '');
+
+  const mapping = {};
+  document.querySelectorAll('.import-user-select').forEach(sel => {
+    const name = sel.dataset.name;
+    mapping[name] = sel.value ? parseInt(sel.value, 10) : null;
+  });
+
+  const res  = await apiFetch('/api/admin/import/commit', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ previewToken: importPreviewToken, mapping }),
+  });
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) { setError('import-error-2', data.error || 'Import failed.'); return; }
 
   document.getElementById('import-result').textContent =
-    `✓ Imported ${data.imported} messages, skipped ${data.skipped}.`;
+    `✓ Imported ${data.imported} message(s), skipped ${data.skipped}.`;
 
   if (data.createdUsers && data.createdUsers.length > 0) {
     const tbody = document.getElementById('created-users-tbody');
@@ -318,6 +373,43 @@ async function doImport(e) {
     });
     document.getElementById('created-users-section').style.display = 'block';
   }
+
+  document.getElementById('import-step-2').style.display = 'none';
+  document.getElementById('import-step-3').style.display = 'block';
+}
+
+function resetImport() {
+  importPreviewToken  = null;
+  importExistingUsers = [];
+  const fileInput = document.getElementById('import-file');
+  if (fileInput) fileInput.value = '';
+  setError('import-error', '');
+  setError('import-error-2', '');
+  document.getElementById('import-result').textContent = '';
+  document.getElementById('created-users-section').style.display = 'none';
+  document.getElementById('import-step-1').style.display = 'block';
+  document.getElementById('import-step-2').style.display = 'none';
+  document.getElementById('import-step-3').style.display = 'none';
+}
+
+// ── Icon upload ───────────────────────────────────────────────────────────────
+
+async function uploadIcon() {
+  const file = document.getElementById('icon-file').files[0];
+  if (!file) { alert('Please choose an image file first.'); return; }
+
+  const form = new FormData();
+  form.append('icon', file);
+
+  const res  = await apiFetch('/api/admin/icon', { method: 'POST', body: form });
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) { alert(data.error || 'Upload failed.'); return; }
+
+  const preview = document.getElementById('icon-preview');
+  if (preview) preview.src = data.url + '?t=' + Date.now();
+  const msg = document.getElementById('icon-upload-msg');
+  if (msg) { msg.textContent = '✓ Icon updated'; msg.style.display = 'block'; setTimeout(() => { msg.style.display = 'none'; }, 2500); }
 }
 
 // ── Utility ───────────────────────────────────────────────────────────────────

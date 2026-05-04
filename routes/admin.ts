@@ -1,11 +1,13 @@
 /**
  * routes/admin.ts
- * Admin API: users, reports, settings, posts.json import, invites.
+ * Admin API: users, reports, settings, icon upload, posts.json import, invites.
  */
 
 import { Router, Request, Response } from 'express';
 import multer                        from 'multer';
 import crypto                        from 'crypto';
+import path                          from 'path';
+import fs                            from 'fs';
 import { getDb, hashPassword, getSetting, setSetting } from '../db';
 import { requireAdmin, createOtp, sendMail }           from '../lib/auth';
 import { rateLimiter }                                 from '../lib/rateLimiter';
@@ -13,12 +15,40 @@ import type { DbUser }                                 from '../types';
 
 const router  = Router();
 const jsonUp  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const imageUp = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 // All routes in this file require admin role, with moderate rate limiting
 router.use(
   requireAdmin,
   rateLimiter({ windowMs: 60_000, max: 120 }),
 );
+
+// ── In-memory preview store for two-step import ───────────────────────────────
+
+interface LegacyPost {
+  id?:        string;
+  user?:      string;
+  text?:      string;
+  imagePath?: string;
+  viewOnce?:  boolean;
+  isBlurred?: boolean;
+  replyId?:   string;
+  replyUser?: string;
+  replyText?: string;
+  createdAt?: number;
+  /** Display names of users who have already viewed this view-once message */
+  seenBy?:    string[];
+}
+
+const importPreviews = new Map<string, { posts: LegacyPost[]; expiresAt: number }>();
+
+// Purge stale previews every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of importPreviews) {
+    if (v.expiresAt < now) importPreviews.delete(k);
+  }
+}, 5 * 60_000);
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
 
@@ -194,6 +224,7 @@ router.get('/settings', (_req: Request, res: Response): void => {
     'main_header',          'enable_view_once',       'enable_blur',
     'enable_emergency_exit','enable_delete_button',   'delete_button',
     'reply_button',         'read_status_seen',       'read_status_unread',
+    'chat_icon_url',
   ];
   const out: Record<string, string | null> = {};
   for (const k of keys) out[k] = getSetting(k);
@@ -216,24 +247,37 @@ router.patch('/settings', (req: Request, res: Response): void => {
   res.sendStatus(204);
 });
 
-// ── POST /api/admin/import ────────────────────────────────────────────────────
+// ── POST /api/admin/icon ──────────────────────────────────────────────────────
 
-interface LegacyPost {
-  id?:        string;
-  user?:      string;
-  text?:      string;
-  imagePath?: string;
-  viewOnce?:  boolean;
-  isBlurred?: boolean;
-  replyId?:   string;
-  replyUser?: string;
-  replyText?: string;
-  createdAt?: number;
-  /** Display names of users who have already viewed this view-once message */
-  seenBy?:    string[];
-}
+router.post('/icon', imageUp.single('icon'), (req: Request, res: Response): void => {
+  if (!req.file) { res.status(400).json({ error: 'No file uploaded' }); return; }
 
-router.post('/import', jsonUp.single('file'), async (req: Request, res: Response): Promise<void> => {
+  const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
+  const mime    = req.file.mimetype.split(';')[0];
+  if (!allowed.includes(mime)) { res.status(400).json({ error: 'Invalid image type' }); return; }
+
+  const extMap: Record<string, string> = {
+    'image/svg+xml': 'svg', 'image/gif': 'gif',
+    'image/png': 'png',     'image/webp': 'webp',
+    'image/jpeg': 'jpg',
+  };
+  const filename = `chat-icon.${extMap[mime] ?? 'png'}`;
+  const iconPath = path.join(__dirname, '..', 'public', filename);
+
+  try {
+    fs.writeFileSync(iconPath, req.file.buffer);
+    const url = `/${filename}`;
+    setSetting('chat_icon_url', url);
+    res.json({ url });
+  } catch (err) {
+    console.error('[admin] icon save failed:', (err as Error).message);
+    res.status(500).json({ error: 'Failed to save icon' });
+  }
+});
+
+// ── POST /api/admin/import/preview ───────────────────────────────────────────
+
+router.post('/import/preview', jsonUp.single('file'), (req: Request, res: Response): void => {
   if (!req.file) { res.status(400).json({ error: 'No file uploaded' }); return; }
 
   let posts: LegacyPost[];
@@ -245,26 +289,82 @@ router.post('/import', jsonUp.single('file'), async (req: Request, res: Response
     return;
   }
 
-  const db        = getDb();
-  const userCache = new Map<string, number>(); // display_name.lower → userId
-  let imported    = 0;
-  let skipped     = 0;
-  const created:  Array<{ displayName: string; username: string; temporaryPassword: string }> = [];
+  const db = getDb();
+  const existingUsers = db.prepare(
+    'SELECT id, username, display_name FROM users WHERE enabled = 1 ORDER BY display_name',
+  ).all() as Array<{ id: number; username: string; display_name: string }>;
 
-  // Pre-load existing users — trim + lowercase for robust matching
-  (db.prepare('SELECT id, display_name FROM users').all() as Array<{ id: number; display_name: string }>)
-    .forEach(u => userCache.set(u.display_name.trim().toLowerCase(), u.id));
+  // Build lookup map for auto-suggestions
+  const nameToUser = new Map<string, { id: number; display_name: string; username: string }>();
+  existingUsers.forEach(u => nameToUser.set(u.display_name.trim().toLowerCase(), u));
 
-  for (const p of posts) {
-    if (!p?.user) { skipped++; continue; }
+  // Collect all unique display names (post authors + seenBy viewers)
+  const uniqueNames = new Map<string, string>(); // trimmed name → original casing
+  posts.forEach(p => {
+    if (p.user) uniqueNames.set(p.user.trim().toLowerCase(), p.user.trim());
+    if (Array.isArray(p.seenBy)) {
+      p.seenBy.forEach(n => { if (n) uniqueNames.set(n.trim().toLowerCase(), n.trim()); });
+    }
+  });
 
-    const nameKey = p.user.trim().toLowerCase();
-    let userId    = userCache.get(nameKey);
+  const nameSuggestions = Array.from(uniqueNames.entries()).map(([key, name]) => {
+    const matched = nameToUser.get(key);
+    return {
+      name,
+      suggestedUserId:      matched?.id          ?? null,
+      suggestedDisplayName: matched?.display_name ?? null,
+      suggestedUsername:    matched?.username     ?? null,
+    };
+  });
 
-    if (!userId) {
-      // Auto-create stub user for unmatched display name.
-      // Append a numeric suffix when the base username is already taken to prevent collision.
-      const base    = p.user.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 28);
+  // Store parsed posts under a one-time token (30-minute TTL)
+  const previewToken = crypto.randomUUID();
+  importPreviews.set(previewToken, { posts, expiresAt: Date.now() + 30 * 60_000 });
+
+  res.json({
+    previewToken,
+    postCount:    posts.length,
+    uniqueNames:  nameSuggestions,
+    existingUsers: existingUsers.map(u => ({ id: u.id, display_name: u.display_name, username: u.username })),
+  });
+});
+
+// ── POST /api/admin/import/commit ─────────────────────────────────────────────
+
+router.post('/import/commit', async (req: Request, res: Response): Promise<void> => {
+  const { previewToken, mapping } = req.body as {
+    previewToken?: string;
+    mapping?: Record<string, number | null>;
+  };
+
+  if (!previewToken || !mapping) {
+    res.status(400).json({ error: 'previewToken and mapping are required' });
+    return;
+  }
+
+  const preview = importPreviews.get(previewToken);
+  if (!preview || preview.expiresAt < Date.now()) {
+    importPreviews.delete(previewToken);
+    res.status(400).json({ error: 'Preview session expired. Please re-upload the file.' });
+    return;
+  }
+  importPreviews.delete(previewToken); // single-use
+
+  const db = getDb();
+
+  // Build trimmed-name → userId from the admin's mapping.
+  // Entries where userId is null trigger auto-creation of a stub account.
+  const nameToUserId = new Map<string, number>(); // trimmed original-case name → userId
+  const created: Array<{ displayName: string; username: string; temporaryPassword: string }> = [];
+
+  for (const [importedName, userId] of Object.entries(mapping)) {
+    const trimmed = importedName.trim();
+    if (userId !== null && userId !== undefined && Number.isInteger(Number(userId))) {
+      const user = db.prepare('SELECT id FROM users WHERE id = ?').get(Number(userId));
+      if (user) nameToUserId.set(trimmed, Number(userId));
+    } else {
+      // Auto-create a stub user for this display name
+      const base    = trimmed.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 28);
       let username  = `${base}_imported`;
       let attempt   = 0;
       while (db.prepare('SELECT id FROM users WHERE username = ?').get(username)) {
@@ -277,17 +377,32 @@ router.post('/import', jsonUp.single('file'), async (req: Request, res: Response
         const info = db.prepare(`
           INSERT INTO users (username, display_name, password_hash, role, force_password_change, enabled, created_at)
           VALUES (?, ?, ?, 'user', 1, 1, ?)
-        `).run(username, p.user, hash, Date.now());
-        userId = Number(info.lastInsertRowid);
-        userCache.set(nameKey, userId);
-        created.push({ displayName: p.user, username, temporaryPassword: password });
-      } catch {
-        skipped++;
-        continue;
-      }
+        `).run(username, trimmed, hash, Date.now());
+        const newId = Number(info.lastInsertRowid);
+        nameToUserId.set(trimmed, newId);
+        created.push({ displayName: trimmed, username, temporaryPassword: password });
+      } catch { /* skip if creation fails */ }
     }
+  }
 
-    // Idempotent by original id
+  // Also populate from existing users by display name (for seenBy names that
+  // may not have appeared as post authors and thus have no mapping entry)
+  (db.prepare('SELECT id, display_name FROM users').all() as Array<{ id: number; display_name: string }>)
+    .forEach(u => {
+      const t = u.display_name.trim();
+      if (!nameToUserId.has(t)) nameToUserId.set(t, u.id);
+    });
+
+  const posts    = preview.posts;
+  let imported   = 0;
+  let skipped    = 0;
+
+  for (const p of posts) {
+    if (!p?.user) { skipped++; continue; }
+
+    const userId = nameToUserId.get(p.user.trim());
+    if (!userId) { skipped++; continue; }
+
     if (p.id) {
       const exists = db.prepare('SELECT id FROM messages WHERE id = ?').get(p.id);
       if (exists) { skipped++; continue; }
@@ -301,26 +416,23 @@ router.post('/import', jsonUp.single('file'), async (req: Request, res: Response
            reply_to_id, reply_user, reply_text, created_at, submitted_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        msgId,
-        userId,
-        p.text       ?? '',
-        p.imagePath  ?? null,
-        p.viewOnce   ? 1 : 0,
-        p.isBlurred  ? 1 : 0,
-        p.replyId    ?? null,
-        p.replyUser  ?? null,
-        p.replyText  ?? null,
-        p.createdAt  ?? Date.now(),
-        p.createdAt  ?? null,
+        msgId, userId,
+        p.text      ?? '',
+        p.imagePath ?? null,
+        p.viewOnce  ? 1 : 0,
+        p.isBlurred ? 1 : 0,
+        p.replyId   ?? null,
+        p.replyUser ?? null,
+        p.replyText ?? null,
+        p.createdAt ?? Date.now(),
+        p.createdAt ?? null,
       );
       imported++;
 
-      // Restore view-once seen state: insert a message_views row for every
-      // user listed in seenBy so the recipient sees the "already viewed" UI.
+      // Restore view-once seen state using the same name→userId mapping
       if (p.viewOnce && Array.isArray(p.seenBy) && p.seenBy.length > 0) {
         for (const viewerName of p.seenBy) {
-          const viewerKey    = viewerName.trim().toLowerCase();
-          const viewerUserId = userCache.get(viewerKey);
+          const viewerUserId = nameToUserId.get(viewerName.trim());
           if (viewerUserId) {
             try {
               db.prepare(

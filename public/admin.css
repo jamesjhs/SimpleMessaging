@@ -231,6 +231,20 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 }
 .file-label span:hover { border-color: #007bff; color: #fff; }
 
+/* ── Icon preview ──────────────────────────────────────────────────────────── */
+#icon-preview {
+  width: 64px; height: 64px; border-radius: 50%; object-fit: cover;
+  border: 2px solid #555; display: block; margin-bottom: 8px;
+}
+
+/* ── Import user-mapping selects ───────────────────────────────────────────── */
+.import-user-select {
+  background: #2a2a3e; border: 1px solid #555; border-radius: 6px;
+  color: var(--admin-text); padding: 5px 8px; font-size: 0.85rem;
+  min-width: 220px; outline: none;
+}
+.import-user-select:focus { border-color: #007bff; }
+
 /* ── Responsive ────────────────────────────────────────────────────────────── */
 @media (max-width: 640px) {
   .admin-nav { flex-wrap: wrap; height: auto; padding: 8px; }

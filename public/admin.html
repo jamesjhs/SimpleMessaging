@@ -99,6 +99,17 @@
 
           <label>Enable PWA</label>
           <input type="checkbox" name="pwa_enabled">
+
+          <label>Chat Icon</label>
+          <div>
+            <img id="icon-preview" src="/icon.svg" alt="Chat icon preview">
+            <label class="file-label" style="margin-top:6px;display:inline-flex;">
+              <input type="file" id="icon-file" accept="image/*">
+              <span>Choose image…</span>
+            </label>
+            <button type="button" class="btn-secondary" onclick="uploadIcon()" style="margin-top:6px;display:block;">Upload Icon</button>
+            <span id="icon-upload-msg" style="color:#4caf50;font-size:0.8rem;margin-top:4px;display:none;"></span>
+          </div>
         </div>
         <button type="submit" class="btn-primary" style="margin-top:16px;">Save Settings</button>
         <span id="settings-saved-msg" style="display:none;color:#4caf50;margin-left:12px;">✓ Saved</span>
@@ -108,28 +119,59 @@
     <!-- ── Import section ────────────────────────────────────── -->
     <section id="section-import" class="admin-section">
       <div class="section-header"><h2>Import Historical Messages</h2></div>
-      <p class="help-text">
-        Upload a <code>posts.json</code> file from the previous version of the app.
-        Messages will be matched to existing users by display name.
-        Unmatched display names will have stub accounts created (with forced password change).
-        Images/videos referenced as paths in <code>./uploads/</code> should already be in place.
-      </p>
-      <div id="import-error" class="error-msg"></div>
-      <div id="import-result" class="success-msg"></div>
-      <form id="import-form" onsubmit="doImport(event)" enctype="multipart/form-data">
-        <label class="file-label">
-          <input type="file" id="import-file" accept=".json,application/json" required>
-          <span>Choose posts.json…</span>
-        </label>
-        <button type="submit" class="btn-primary" style="margin-top:12px;">Import</button>
-      </form>
-      <div id="created-users-section" style="display:none;margin-top:24px;">
-        <h3>Stub accounts created</h3>
-        <p class="help-text">These accounts were automatically created. Share the credentials with the relevant users and ask them to change their password on first login.</p>
-        <table>
-          <thead><tr><th>Display Name</th><th>Username</th><th>Temporary Password</th></tr></thead>
-          <tbody id="created-users-tbody"></tbody>
-        </table>
+
+      <!-- Step 1: File upload + parse -->
+      <div id="import-step-1">
+        <p class="help-text">
+          Upload a <code>posts.json</code> file. The file will be parsed and you will be able to
+          assign each imported display name to an existing account before anything is written to the database.
+          Images/videos referenced as paths in <code>./uploads/</code> should already be in place.
+        </p>
+        <div id="import-error" class="error-msg"></div>
+        <form id="import-form" onsubmit="previewImport(event)" enctype="multipart/form-data">
+          <label class="file-label">
+            <input type="file" id="import-file" accept=".json,application/json" required>
+            <span>Choose posts.json…</span>
+          </label>
+          <button type="submit" class="btn-primary" style="margin-top:12px;">Parse &amp; Preview</button>
+        </form>
+      </div>
+
+      <!-- Step 2: User-assignment review -->
+      <div id="import-step-2" style="display:none;">
+        <h3 style="margin:0 0 8px;">Assign Imported Users</h3>
+        <p class="help-text">
+          For each display name found in the file, select the existing account it should be mapped to,
+          or choose <em>"Auto-create new account"</em> to generate a stub account.
+        </p>
+        <div id="import-error-2" class="error-msg"></div>
+        <div class="table-wrap">
+          <table id="import-mapping-table">
+            <thead>
+              <tr><th>Imported Display Name</th><th>Assign to existing user</th></tr>
+            </thead>
+            <tbody id="import-mapping-tbody"></tbody>
+          </table>
+        </div>
+        <p id="import-preview-count" style="margin-top:10px;color:#aaa;font-size:0.85rem;"></p>
+        <div style="margin-top:16px;display:flex;gap:8px;">
+          <button class="btn-primary" onclick="commitImport()">Confirm &amp; Import</button>
+          <button class="btn-secondary" onclick="resetImport()">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Step 3: Results -->
+      <div id="import-step-3" style="display:none;">
+        <div id="import-result" class="success-msg"></div>
+        <div id="created-users-section" style="display:none;margin-top:24px;">
+          <h3>Stub accounts created</h3>
+          <p class="help-text">These accounts were automatically created. Share the credentials with the relevant users and ask them to change their password on first login.</p>
+          <table>
+            <thead><tr><th>Display Name</th><th>Username</th><th>Temporary Password</th></tr></thead>
+            <tbody id="created-users-tbody"></tbody>
+          </table>
+        </div>
+        <button class="btn-secondary" onclick="resetImport()" style="margin-top:16px;">Import Another File</button>
       </div>
     </section>
 

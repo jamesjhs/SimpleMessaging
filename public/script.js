@@ -248,6 +248,14 @@ async function loadConfig() {
     if (appConfig.enableEmergencyExit) activateEmergencyExit();
 
     if (appConfig.turnstileSiteKey) loadTurnstile(appConfig.turnstileSiteKey);
+
+    // Apply custom chat icon if the admin has set one
+    if (appConfig.chatIconUrl) {
+      const headerLogo = document.getElementById('header-logo');
+      if (headerLogo) headerLogo.src = appConfig.chatIconUrl;
+      const loginLogo  = document.getElementById('login-logo');
+      if (loginLogo)  loginLogo.src  = appConfig.chatIconUrl;
+    }
   } catch (e) {
     console.warn('[config] could not load:', e.message);
   }
@@ -1407,6 +1415,13 @@ async function init() {
     if (cfgRes.ok) {
       appConfig = await cfgRes.json();
       if (appConfig.turnstileSiteKey) loadTurnstile(appConfig.turnstileSiteKey);
+      // Apply custom icon immediately so the login screen shows the right logo
+      if (appConfig.chatIconUrl) {
+        const loginLogo  = document.getElementById('login-logo');
+        if (loginLogo)  loginLogo.src  = appConfig.chatIconUrl;
+        const headerLogo = document.getElementById('header-logo');
+        if (headerLogo) headerLogo.src = appConfig.chatIconUrl;
+      }
     }
 
     const res = await fetch('/api/me', { credentials: 'same-origin' });
