@@ -426,7 +426,14 @@ router.delete('/messages/:id/react', requireAuth, (req: Request, res: Response):
     return;
   }
 
-  getDb().prepare(
+  const db  = getDb();
+  const msg = db.prepare(
+    'SELECT id FROM messages WHERE id = ? AND deleted_at IS NULL',
+  ).get(req.params.id) as { id: string } | undefined;
+
+  if (!msg) { res.sendStatus(404); return; }
+
+  db.prepare(
     'DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?',
   ).run(req.params.id, req.user!.id, emoji);
 

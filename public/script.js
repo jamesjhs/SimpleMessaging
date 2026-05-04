@@ -559,10 +559,11 @@ function updateReactionStrip(msgEl, reactions) {
   if (!strip) return;
   if (!reactions || reactions.length === 0) { strip.innerHTML = ''; return; }
   strip.innerHTML = reactions.map(r => {
-    const count = r.users.length;
-    const isMine = currentUser && r.users.includes(currentUser);
-    const label = count > 1 ? `${r.emoji} ${count}` : r.emoji;
-    return `<span class="reaction-chip${isMine ? ' mine' : ''}" data-emoji="${escapeHtml(r.emoji)}">${label}</span>`;
+    const count   = r.users.length;
+    const isMine  = currentUser && r.users.includes(currentUser);
+    const safeEmoji = escapeHtml(r.emoji);
+    const label   = count > 1 ? `${safeEmoji} ${count}` : safeEmoji;
+    return `<span class="reaction-chip${isMine ? ' mine' : ''}" data-emoji="${safeEmoji}">${label}</span>`;
   }).join('');
 }
 
@@ -1271,11 +1272,14 @@ document.getElementById('reaction-picker').addEventListener('click', async e => 
   const msgId = reactionPickerTarget.dataset.id;
   const picker = document.getElementById('reaction-picker');
   picker.classList.remove('visible');
-  reactionPickerTarget = null;
+  reactionPickerTarget    = null;
+  suppressPickerDismiss   = false;
 
   // Check if this user already reacted with this emoji (toggle off) or switch/add
-  const strip = document.querySelector(`.post[data-id="${msgId}"] .reaction-strip`);
-  const existingChip = strip ? strip.querySelector(`.reaction-chip.mine[data-emoji="${emoji}"]`) : null;
+  const strip = document.querySelector(`.post[data-id="${CSS.escape(msgId)}"] .reaction-strip`);
+  const existingChip = strip
+    ? strip.querySelector(`.reaction-chip.mine[data-emoji="${CSS.escape(emoji)}"]`)
+    : null;
 
   if (existingChip) {
     // Remove the reaction
