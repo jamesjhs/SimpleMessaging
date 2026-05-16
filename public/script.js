@@ -524,6 +524,8 @@ function renderMessage(p, otherLastSeen, me, cfg) {
     <div class="reaction-strip"></div>
   `;
 
+  attachMediaUnavailableFallback(div);
+
   // Delete button (own messages)
   if (isMine && cfg.enableDeleteButton !== false) {
     const btn   = document.createElement('button');
@@ -550,6 +552,19 @@ function renderMessage(p, otherLastSeen, me, cfg) {
   updateReactionStrip(div, p.reactions);
 
   return div;
+}
+
+function attachMediaUnavailableFallback(messageEl) {
+  const mediaEls = messageEl.querySelectorAll('img.chat-img, video.chat-img');
+  mediaEls.forEach(el => {
+    el.addEventListener('error', () => {
+      if (!el.isConnected) return;
+      const placeholder = document.createElement('div');
+      placeholder.className = 'media-unavailable';
+      placeholder.textContent = '[Media unavailable]';
+      el.replaceWith(placeholder);
+    }, { once: true });
+  });
 }
 
 // ── Reaction strip renderer ────────────────────────────────────────────────────

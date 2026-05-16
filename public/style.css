@@ -102,6 +102,14 @@ h1#main-title {
 .chat-img.clickable-img { cursor: pointer; }
 .chat-img.blurred-preview { filter: blur(16px); transition: filter 0.3s; }
 video.chat-img { background: #000; width: 200px; height: 200px; }
+.media-unavailable {
+  margin-top: 5px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.22);
+  color: #cfcfcf;
+  font-size: 0.85rem;
+}
 
 /* ── View-once ──────────────────────────────────────────────────────────── */
 .view-once { padding: 8px 12px; border-radius: 8px; text-align: center; margin-top: 5px; font-size: 0.9rem; }
