@@ -6,6 +6,7 @@
 import { Router, Request, Response }    from 'express';
 import multer, { MulterError }          from 'multer';
 import sharp                            from 'sharp';
+import webpush                          from 'web-push';
 import path                             from 'path';
 import fs                               from 'fs';
 import crypto                           from 'crypto';
@@ -16,6 +17,19 @@ import type { DbMessage, ApiPost }      from '../types';
 
 const router      = Router();
 const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
+
+// ── VAPID initialisation ──────────────────────────────────────────────────────
+
+const VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY  ?? '';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY ?? '';
+
+if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    `mailto:${process.env.SMTP_FROM?.replace(/.*<(.+)>/, '$1') ?? 'noreply@localhost'}`,
+    VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY,
+  );
+}
 
 // In-memory typing state (transient – not persisted)
 const typingUsers = new Map<string, number>(); // displayName → timestamp
@@ -95,20 +109,22 @@ router.get('/me', requireAuth, (req: Request, res: Response): void => {
 
 router.get('/config', (_req: Request, res: Response): void => {
   res.json({
-    siteTitle:           getSetting('site_title')            ?? 'TLS',
-    mainHeader:          getSetting('main_header')           ?? 'TLS',
-    readStatusSeen:      getSetting('read_status_seen')      ?? '✓✓',
-    readStatusUnread:    getSetting('read_status_unread')    ?? '✓',
-    deleteButton:        getSetting('delete_button')         ?? '✗',
-    replyButton:         getSetting('reply_button')          ?? '↩',
-    enableDeleteButton:  getSetting('enable_delete_button') !== '0',
-    enableViewOnce:      getSetting('enable_view_once')     !== '0',
-    enableBlur:          getSetting('enable_blur')          !== '0',
-    enableEmergencyExit: getSetting('enable_emergency_exit') !== '0',
-    enableReport:        getSetting('report_enabled')        === '1',
-    pwaEnabled:          getSetting('pwa_enabled')           === '1',
-    turnstileSiteKey:    process.env.TURNSTILE_SITE_KEY      ?? null,
-    chatIconUrl:         getSetting('chat_icon_url')         ?? null,
+    siteTitle:                  getSetting('site_title')            ?? 'TLS',
+    mainHeader:                 getSetting('main_header')           ?? 'TLS',
+    readStatusSeen:             getSetting('read_status_seen')      ?? '✓✓',
+    readStatusUnread:           getSetting('read_status_unread')    ?? '✓',
+    deleteButton:               getSetting('delete_button')         ?? '✗',
+    replyButton:                getSetting('reply_button')          ?? '↩',
+    enableDeleteButton:         getSetting('enable_delete_button') !== '0',
+    enableViewOnce:             getSetting('enable_view_once')     !== '0',
+    enableBlur:                 getSetting('enable_blur')          !== '0',
+    enableEmergencyExit:        getSetting('enable_emergency_exit') !== '0',
+    enableReport:               getSetting('report_enabled')        === '1',
+    pwaEnabled:                 getSetting('pwa_enabled')           === '1',
+    pushNotificationsEnabled:   getSetting('push_notifications_enabled') === '1',
+    vapidPublicKey:             VAPID_PUBLIC_KEY || null,
+    turnstileSiteKey:           process.env.TURNSTILE_SITE_KEY      ?? null,
+    chatIconUrl:                getSetting('chat_icon_url')         ?? null,
   });
 });
 
@@ -237,6 +253,36 @@ router.post(
       createdAt,
       parseInt(submittedAt ?? '', 10) || now,
     );
+
+    // Dispatch push notifications to all other subscribed users (fire-and-forget)
+    if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY && getSetting('push_notifications_enabled') === '1') {
+      const senderName = req.user!.display_name;
+      const preview    = text?.trim()
+        ? (text.trim().length > 80 ? text.trim().slice(0, 80) + '…' : text.trim())
+        : '📎 Media';
+      const payload = JSON.stringify({ title: senderName, body: preview });
+
+      const subs = getDb().prepare(`
+        SELECT ps.endpoint, ps.p256dh, ps.auth
+        FROM push_subscriptions ps
+        JOIN users u ON u.id = ps.user_id
+        WHERE ps.user_id != ? AND u.enabled = 1
+      `).all(req.user!.id) as Array<{ endpoint: string; p256dh: string; auth: string }>;
+
+      for (const sub of subs) {
+        webpush.sendNotification(
+          { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+          payload,
+        ).catch(err => {
+          // Remove stale subscriptions (410 Gone / 404 Not Found)
+          if (err.statusCode === 410 || err.statusCode === 404) {
+            getDb().prepare(
+              'DELETE FROM push_subscriptions WHERE endpoint = ?',
+            ).run(sub.endpoint);
+          }
+        });
+      }
+    }
 
     res.status(201).json({ success: true });
   },
@@ -436,6 +482,64 @@ router.delete('/messages/:id/react', requireAuth, (req: Request, res: Response):
   db.prepare(
     'DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?',
   ).run(req.params.id, req.user!.id, emoji);
+
+  res.sendStatus(204);
+});
+
+// ── GET /api/push/vapid-public-key ────────────────────────────────────────────
+
+router.get('/push/vapid-public-key', (_req: Request, res: Response): void => {
+  if (!VAPID_PUBLIC_KEY) {
+    res.status(503).json({ error: 'Push notifications not configured' });
+    return;
+  }
+  res.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+// ── POST /api/push/subscribe ──────────────────────────────────────────────────
+
+router.post('/push/subscribe', requireAuth, (req: Request, res: Response): void => {
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+    res.status(503).json({ error: 'Push notifications not configured on this server' });
+    return;
+  }
+  if (getSetting('push_notifications_enabled') !== '1') {
+    res.status(403).json({ error: 'Push notifications are not enabled' });
+    return;
+  }
+
+  const { endpoint, keys } = req.body as {
+    endpoint?: string;
+    keys?: { p256dh?: string; auth?: string };
+  };
+
+  if (!endpoint || !keys?.p256dh || !keys?.auth) {
+    res.status(400).json({ error: 'endpoint and keys (p256dh, auth) are required' });
+    return;
+  }
+
+  const db = getDb();
+  db.prepare(`
+    INSERT OR REPLACE INTO push_subscriptions (user_id, endpoint, p256dh, auth, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(req.user!.id, endpoint, keys.p256dh, keys.auth, Date.now());
+
+  res.status(201).json({ status: 'subscribed' });
+});
+
+// ── DELETE /api/push/unsubscribe ──────────────────────────────────────────────
+
+router.delete('/push/unsubscribe', requireAuth, (req: Request, res: Response): void => {
+  const { endpoint } = req.body as { endpoint?: string };
+
+  if (!endpoint) {
+    // Remove all subscriptions for this user
+    getDb().prepare('DELETE FROM push_subscriptions WHERE user_id = ?').run(req.user!.id);
+  } else {
+    getDb().prepare(
+      'DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?',
+    ).run(req.user!.id, endpoint);
+  }
 
   res.sendStatus(204);
 });

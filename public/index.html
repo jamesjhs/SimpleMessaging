@@ -119,6 +119,14 @@
       <input type="checkbox" id="enter-to-send-toggle" onchange="toggleEnterToSend(this.checked)"> ⏎ Enter to Send
     </label>
 
+    <div id="push-notification-row" style="display:none;">
+      <hr class="panel-divider">
+      <label id="push-notification-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 0;font-size:0.9rem;">
+        <input type="checkbox" id="push-toggle" onchange="togglePushNotifications(this.checked)"> 🔔 Push Notifications
+      </label>
+      <div id="push-status-msg" style="font-size:0.75rem;color:#aaa;padding:2px 0 4px;display:none;"></div>
+    </div>
+
     <hr class="panel-divider">
 
     <div style="font-size:0.8rem;color:#aaa;padding:2px 0 6px;">Font Size</div>

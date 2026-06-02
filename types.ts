@@ -76,6 +76,15 @@ export interface DbUserPreferences {
   updated_at:    number | null;
 }
 
+export interface DbPushSubscription {
+  id:         number;
+  user_id:    number;
+  endpoint:   string;
+  p256dh:     string;
+  auth:       string;
+  created_at: number;
+}
+
 // ── Auth user (attached to req.user by middleware) ────────────────────────────
 
 export interface AuthUser {

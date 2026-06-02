@@ -290,7 +290,7 @@ async function saveSettings(e) {
     const el = form.elements[k];
     if (el) body[k] = el.value;
   });
-  ['enable_delete_button','enable_view_once','enable_blur','enable_emergency_exit','report_enabled','pwa_enabled'].forEach(k => {
+  ['enable_delete_button','enable_view_once','enable_blur','enable_emergency_exit','report_enabled','pwa_enabled','push_notifications_enabled'].forEach(k => {
     const el = form.elements[k];
     if (el) body[k] = el.checked ? '1' : '0';
   });

@@ -1637,6 +1637,116 @@ function registerServiceWorker() {
   }).catch(e => console.warn('[sw]', e.message));
 }
 
+// ── Push notifications ────────────────────────────────────────────────────────
+
+async function initPushNotifications() {
+  const row = document.getElementById('push-notification-row');
+  if (!row) return;
+
+  // Only show the toggle when PWA and push are both enabled on the server,
+  // push is supported by the browser, and VAPID keys are configured.
+  if (!appConfig.pwaEnabled ||
+      !appConfig.pushNotificationsEnabled ||
+      !appConfig.vapidPublicKey ||
+      !('serviceWorker' in navigator) ||
+      !('PushManager' in window)) {
+    row.style.display = 'none';
+    return;
+  }
+
+  row.style.display = 'block';
+
+  // Reflect current subscription state in the toggle
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    const toggle = document.getElementById('push-toggle');
+    if (toggle) toggle.checked = !!sub;
+  } catch { /* ignore */ }
+}
+
+async function togglePushNotifications(enable) {
+  const toggle  = document.getElementById('push-toggle');
+  const statusEl = document.getElementById('push-status-msg');
+  if (statusEl) { statusEl.style.display = 'none'; }
+
+  if (enable) {
+    await subscribeToPush();
+  } else {
+    await unsubscribeFromPush();
+  }
+
+  // Re-read actual state from browser to keep toggle in sync
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (toggle) toggle.checked = !!sub;
+  } catch { /* ignore */ }
+}
+
+async function subscribeToPush() {
+  const statusEl = document.getElementById('push-status-msg');
+
+  if (!appConfig.vapidPublicKey) {
+    if (statusEl) { statusEl.textContent = 'Push notifications not available.'; statusEl.style.display = 'block'; }
+    return;
+  }
+
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      if (statusEl) { statusEl.textContent = 'Notification permission denied.'; statusEl.style.display = 'block'; }
+      return;
+    }
+
+    const reg = await navigator.serviceWorker.ready;
+    const subscription = await reg.pushManager.subscribe({
+      userVisibleOnly:      true,
+      applicationServerKey: urlBase64ToUint8Array(appConfig.vapidPublicKey),
+    });
+
+    const res = await apiFetch('/api/push/subscribe', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(subscription.toJSON()),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (statusEl) { statusEl.textContent = data.error || 'Failed to subscribe.'; statusEl.style.display = 'block'; }
+      await subscription.unsubscribe();
+    }
+  } catch (err) {
+    if (statusEl) { statusEl.textContent = 'Could not enable push notifications.'; statusEl.style.display = 'block'; }
+    console.warn('[push] subscribe error:', err);
+  }
+}
+
+async function unsubscribeFromPush() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      await apiFetch('/api/push/unsubscribe', {
+        method:  'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ endpoint: sub.endpoint }),
+      }).catch(() => {});
+      await sub.unsubscribe();
+    }
+  } catch (err) {
+    console.warn('[push] unsubscribe error:', err);
+  }
+}
+
+/** Convert a base64url VAPID public key to Uint8Array for PushManager.subscribe */
+function urlBase64ToUint8Array(base64String) {
+  const padding  = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64   = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData  = atob(base64);
+  return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
+}
+
 // ── Main init ─────────────────────────────────────────────────────────────────
 
 async function init() {
@@ -1646,6 +1756,7 @@ async function init() {
   await loadMessages();
   updateButtonState();
   registerServiceWorker();
+  await initPushNotifications();
 
   if (!appInitialized) {
     appInitialized = true;

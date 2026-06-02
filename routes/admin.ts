@@ -231,11 +231,11 @@ router.patch('/reports/:id', (req: Request, res: Response): void => {
 
 router.get('/settings', (_req: Request, res: Response): void => {
   const keys = [
-    'pwa_enabled',          'report_enabled',        'site_title',
-    'main_header',          'enable_view_once',       'enable_blur',
-    'enable_emergency_exit','enable_delete_button',   'delete_button',
-    'reply_button',         'read_status_seen',       'read_status_unread',
-    'chat_icon_url',
+    'pwa_enabled',          'report_enabled',        'push_notifications_enabled',
+    'site_title',           'main_header',            'enable_view_once',
+    'enable_blur',          'enable_emergency_exit',  'enable_delete_button',
+    'delete_button',        'reply_button',           'read_status_seen',
+    'read_status_unread',   'chat_icon_url',
   ];
   const out: Record<string, string | null> = {};
   for (const k of keys) out[k] = getSetting(k);
@@ -246,10 +246,11 @@ router.get('/settings', (_req: Request, res: Response): void => {
 
 router.patch('/settings', (req: Request, res: Response): void => {
   const allowed = [
-    'pwa_enabled',          'report_enabled',        'site_title',
-    'main_header',          'enable_view_once',       'enable_blur',
-    'enable_emergency_exit','enable_delete_button',   'delete_button',
-    'reply_button',         'read_status_seen',       'read_status_unread',
+    'pwa_enabled',          'report_enabled',        'push_notifications_enabled',
+    'site_title',           'main_header',            'enable_view_once',
+    'enable_blur',          'enable_emergency_exit',  'enable_delete_button',
+    'delete_button',        'reply_button',           'read_status_seen',
+    'read_status_unread',
   ];
   const body = req.body as Record<string, unknown>;
   for (const k of allowed) {
