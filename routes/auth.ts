@@ -126,7 +126,7 @@ router.post(
   }
 
   // No 2FA – create session immediately
-  createSession(user.id, res);
+  createSession(user.id, req, res);
   res.json({
     status: user.force_password_change ? 'change_password' : 'ok',
     user:   { displayName: user.display_name, role: user.role },
@@ -159,7 +159,7 @@ router.post(
     return;
   }
 
-  createSession(user.id, res);
+  createSession(user.id, req, res);
   res.json({
     status: user.force_password_change ? 'change_password' : 'ok',
     user:   { displayName: user.display_name, role: user.role },
@@ -171,7 +171,7 @@ router.post(
 
 router.post('/logout', (req: Request, res: Response): void => {
   const cookies = parseCookies(req);
-  destroySession(cookies.session, res);
+  destroySession(cookies.session, req, res);
   res.sendStatus(204);
 });
 

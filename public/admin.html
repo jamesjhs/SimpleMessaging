@@ -98,7 +98,13 @@
           <input type="checkbox" name="report_enabled">
 
           <label>Enable PWA</label>
-          <input type="checkbox" name="pwa_enabled">
+          <input type="checkbox" name="pwa_enabled" id="pwa-enabled-toggle">
+
+          <label>Enable Push Notifications</label>
+          <input type="checkbox" name="push_notifications_enabled" id="push-enabled-toggle">
+          <div id="push-settings-help" class="col-span-2" style="font-size:0.8rem;color:#aaa;margin-top:-8px;">
+            Requires PWA to be enabled and VAPID keys configured in the server environment. Users must install the PWA and opt in individually from their settings panel.
+          </div>
 
           <label>Chat Icon</label>
           <div>
@@ -211,6 +217,9 @@
 
           <label>Account Enabled</label>
           <input type="checkbox" id="user-enabled" checked>
+
+          <label id="user-locked-label" style="display:none;">Account Locked</label>
+          <input type="checkbox" id="user-locked" style="display:none;">
         </div>
         <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end;">
           <button type="submit" class="btn-primary">Save</button>

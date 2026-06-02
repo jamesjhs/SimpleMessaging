@@ -5,9 +5,9 @@
   "main": "server.ts",
   "type": "commonjs",
   "scripts": {
-    "start":    "tsx server.ts",
-    "build":    "tsc",
-    "dev":      "tsx watch server.ts",
+    "start": "tsx server.ts",
+    "build": "tsc",
+    "dev": "tsx watch server.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
@@ -19,7 +19,8 @@
     "express": "^5.2.1",
     "multer": "^2.1.1",
     "nodemailer": "^8.0.7",
-    "sharp": "^0.34.5"
+    "sharp": "^0.34.5",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
@@ -27,6 +28,7 @@
     "@types/multer": "^2.1.0",
     "@types/node": "^25.6.0",
     "@types/nodemailer": "^8.0.0",
+    "@types/web-push": "^3.6.4",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3"
   }

@@ -112,10 +112,22 @@ export function parseCookies(req: Request): Record<string, string> {
 
 // ── Session management ────────────────────────────────────────────────────────
 
+function buildSessionCookie(req: Request, token: string, maxAgeSeconds: number): string {
+  const parts = [
+    `session=${encodeURIComponent(token)}`,
+    'HttpOnly',
+    'SameSite=Strict',
+    'Path=/',
+    `Max-Age=${maxAgeSeconds}`,
+  ];
+  if (req.secure) parts.push('Secure');
+  return parts.join('; ');
+}
+
 /**
  * Creates a new session for a user and sets the session cookie on res.
  */
-export function createSession(userId: number, res: Response): string {
+export function createSession(userId: number, req: Request, res: Response): string {
   const db    = getDb();
   const token = crypto.randomBytes(32).toString('hex');
   const now   = Date.now();
@@ -127,18 +139,18 @@ export function createSession(userId: number, res: Response): string {
 
   res.setHeader(
     'Set-Cookie',
-    `session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_MS / 1000}`,
+    buildSessionCookie(req, token, SESSION_TTL_MS / 1000),
   );
   return token;
 }
 
-export function destroySession(token: string | undefined, res: Response): void {
+export function destroySession(token: string | undefined, req: Request, res: Response): void {
   if (token) {
     try {
       getDb().prepare('DELETE FROM sessions WHERE token = ?').run(token);
     } catch { /* ignore */ }
   }
-  res.setHeader('Set-Cookie', 'session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
+  res.setHeader('Set-Cookie', buildSessionCookie(req, '', 0));
 }
 
 /**

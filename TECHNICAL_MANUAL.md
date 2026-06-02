@@ -199,6 +199,7 @@ Per-user UI settings.
 | `user_id` | INTEGER PK FK → users.id | |
 | `colour_scheme` | TEXT | `'default'`, `'ocean'`, `'purple'`, `'warm'`, `'forest'` |
 | `enter_to_send` | INTEGER | `1` = Enter key submits the form |
+| `push_enabled` | INTEGER | User's persisted preference for push notifications on their account |
 | `updated_at` | INTEGER | |
 
 #### `app_settings`
@@ -207,6 +208,7 @@ Key/value store for admin-configurable settings.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `pwa_enabled` | `'0'` | Enable PWA manifest and service worker |
+| `push_notifications_enabled` | `'0'` | Allow installed PWA clients to opt in to push notifications |
 | `report_enabled` | `'0'` | Show report button on received messages |
 | `site_title` | `'TLS'` | Browser tab title |
 | `main_header` | `'TLS'` | Chat header text (also the emergency-exit trigger) |
@@ -466,6 +468,13 @@ The service worker (`public/sw.js`) implements:
 
 **Automatic cache busting on deploy**: The server reads `sw.js` at startup and replaces the literal string `tls-__APP_VERSION__` with the actual package version (e.g. `tls-0.2.0`). The browser then sees a changed SW script, triggering an update cycle. The client-side `updatefound` handler reloads the page automatically once the new SW is installed.
 
+### Install + Push Onboarding
+
+- The page links to `/manifest.json`, so browsers can offer a real install flow when `pwa_enabled = '1'`.
+- Users are prompted to install the app first; the push toggle is only shown from the installed PWA context (`display-mode: standalone` / home-screen install).
+- Push can only be enabled globally when the admin has both turned on the PWA and configured `VAPID_PUBLIC_KEY` plus `VAPID_PRIVATE_KEY`.
+- If the admin disables the PWA or push notifications, stored browser subscriptions are cleared so the server stops dispatching notifications immediately.
+
 ### Icon
 
 The app icon is defined as an SVG (`public/icon.svg`: a chat bubble on a dark background). Modern browsers and Android PWAs support SVG icons natively. The `<link rel="icon" type="image/svg+xml">` tag in `index.html` ensures the icon appears in the browser tab.
@@ -515,7 +524,7 @@ The SQLite file is encrypted with SQLCipher (AES-256-CBC). The encryption key is
 ### Session Security
 
 - Session tokens are 256-bit cryptographically random values (32 bytes from `crypto.randomBytes`).
-- Cookies are `HttpOnly` (not accessible to JavaScript), `SameSite=Strict` (CSRF protection), and should be served over HTTPS (`Secure` flag).
+- Cookies are `HttpOnly` (not accessible to JavaScript), `SameSite=Strict` (CSRF protection), and gain the `Secure` flag automatically whenever the request is HTTPS.
 - Sessions expire after 7 days and are cleaned up hourly.
 
 ### Password Security
@@ -607,7 +616,7 @@ npm run build    # tsc → dist/
 node dist/server.js
 ```
 
-A `process.env.NODE_ENV=production` environment is recommended so that session cookies gain the `Secure` flag automatically.
+Serve TLS over HTTPS directly or via a trusted reverse proxy so session cookies can be marked `Secure`.
 
 ### Reverse Proxy (nginx example)
 
@@ -629,7 +638,7 @@ server {
 }
 ```
 
-When behind a proxy, add `app.set('trust proxy', 1)` to `server.ts` so that `req.ip` reflects the real client address and rate limiting works correctly.
+When behind a proxy, set `TRUST_PROXY=1` (or another valid Express trust-proxy value) so that `req.ip` reflects the real client address, rate limiting works correctly, Turnstile receives the correct client IP, and HTTPS requests terminated at the proxy still receive `Secure` session cookies.
 
 ### Health Check
 

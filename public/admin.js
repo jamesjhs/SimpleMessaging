@@ -1,5 +1,7 @@
 'use strict';
 
+let adminSettingsMeta = { vapidConfigured: false };
+
 // ── Navigation ────────────────────────────────────────────────────────────────
 
 function showSection(name) {
@@ -81,8 +83,10 @@ function openCreateUser() {
   document.getElementById('user-enabled').checked  = true;
   document.getElementById('password-label').textContent = 'Password *';
   document.getElementById('user-username').removeAttribute('readonly');
-  document.getElementById('password-hint').style.display = 'none';
-  document.getElementById('invite-btn').style.display    = 'none';
+  document.getElementById('password-hint').style.display  = 'none';
+  document.getElementById('invite-btn').style.display     = 'none';
+  document.getElementById('user-locked-label').style.display = 'none';
+  document.getElementById('user-locked').style.display       = 'none';
   setError('user-modal-error', '');
   document.getElementById('user-modal').style.display = 'flex';
 }
@@ -102,6 +106,10 @@ async function openEditUser(id) {
   document.getElementById('user-password').value    = '';
   document.getElementById('user-twofa').checked     = !!u.two_fa_enabled;
   document.getElementById('user-enabled').checked   = !!u.enabled;
+  // Show the locked toggle only when editing; uncheck means "unlock on save"
+  document.getElementById('user-locked').checked              = !!u.login_locked;
+  document.getElementById('user-locked-label').style.display = 'block';
+  document.getElementById('user-locked').style.display       = 'block';
   document.getElementById('password-label').textContent = 'New Password';
   document.getElementById('user-username').setAttribute('readonly', 'true');
   document.getElementById('password-hint').style.display  = 'block';
@@ -126,11 +134,12 @@ async function saveUser(e) {
   const password    = document.getElementById('user-password').value;
   const twoFa       = document.getElementById('user-twofa').checked;
   const enabled     = document.getElementById('user-enabled').checked;
+  const locked      = document.getElementById('user-locked').checked;
 
   if (!isEdit && !password) { setError('user-modal-error', 'Password is required for new users.'); return; }
 
   if (isEdit) {
-    const body = { displayName, email: email || null, role, twoFaEnabled: twoFa, enabled };
+    const body = { displayName, email: email || null, role, twoFaEnabled: twoFa, enabled, loginLocked: locked };
     if (password) body.newPassword = password;
     const res = await apiFetch(`/api/admin/users/${id}`, {
       method:  'PATCH',
@@ -265,6 +274,7 @@ async function loadSettings() {
   if (!res.ok) { setError('settings-error', 'Failed to load settings.'); return; }
   const s   = await res.json();
   const form = document.getElementById('settings-form');
+  adminSettingsMeta.vapidConfigured = s.vapid_configured === '1';
 
   Object.entries(s).forEach(([key, val]) => {
     const el = form.elements[key];
@@ -278,6 +288,32 @@ async function loadSettings() {
     const preview = document.getElementById('icon-preview');
     if (preview) preview.src = s.chat_icon_url + '?t=' + Date.now();
   }
+
+  updatePushSettingsUi();
+}
+
+function updatePushSettingsUi() {
+  const pwaToggle  = document.getElementById('pwa-enabled-toggle');
+  const pushToggle = document.getElementById('push-enabled-toggle');
+  const help       = document.getElementById('push-settings-help');
+  if (!pwaToggle || !pushToggle || !help) return;
+
+  const pwaEnabled      = !!pwaToggle.checked;
+  const vapidConfigured = !!adminSettingsMeta.vapidConfigured;
+  const pushAllowed     = pwaEnabled && vapidConfigured;
+
+  pushToggle.disabled = !pushAllowed;
+  if (!pushAllowed) pushToggle.checked = false;
+
+  if (!vapidConfigured) {
+    help.textContent = 'Push notifications stay disabled until VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are configured on the server.';
+    return;
+  }
+  if (!pwaEnabled) {
+    help.textContent = 'Enable the PWA first. Users can only opt in to push after installing the app on their device.';
+    return;
+  }
+  help.textContent = 'Push is ready to be enabled. Users must still install the PWA and opt in individually from their settings panel.';
 }
 
 async function saveSettings(e) {
@@ -290,7 +326,7 @@ async function saveSettings(e) {
     const el = form.elements[k];
     if (el) body[k] = el.value;
   });
-  ['enable_delete_button','enable_view_once','enable_blur','enable_emergency_exit','report_enabled','pwa_enabled'].forEach(k => {
+  ['enable_delete_button','enable_view_once','enable_blur','enable_emergency_exit','report_enabled','pwa_enabled','push_notifications_enabled'].forEach(k => {
     const el = form.elements[k];
     if (el) body[k] = el.checked ? '1' : '0';
   });
@@ -301,13 +337,18 @@ async function saveSettings(e) {
     body:    JSON.stringify(body),
   });
 
-  if (!res.ok) { setError('settings-error', 'Failed to save settings.'); return; }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    setError('settings-error', data.error || 'Failed to save settings.');
+    return;
+  }
 
   const msg = document.getElementById('settings-saved-msg');
   if (msg) {
     msg.style.display = 'inline';
     setTimeout(() => { msg.style.display = 'none'; }, 2500);
   }
+  loadSettings();
 }
 
 // ── Import (two-step: preview → commit) ───────────────────────────────────────
@@ -443,6 +484,9 @@ function esc(str) {
 document.getElementById('user-modal').addEventListener('click', e => {
   if (e.target === document.getElementById('user-modal')) closeUserModal();
 });
+
+const adminPwaToggle = document.getElementById('pwa-enabled-toggle');
+if (adminPwaToggle) adminPwaToggle.addEventListener('change', updatePushSettingsUi);
 
 // Load users on page open
 loadUsers();

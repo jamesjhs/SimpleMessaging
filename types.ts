@@ -72,8 +72,18 @@ export interface DbUserPreferences {
   user_id:       number;
   colour_scheme: string | null;
   enter_to_send: 0 | 1;
+  push_enabled:  0 | 1;
   font_size:     number | null;
   updated_at:    number | null;
+}
+
+export interface DbPushSubscription {
+  id:         number;
+  user_id:    number;
+  endpoint:   string;
+  p256dh:     string;
+  auth:       string;
+  created_at: number;
 }
 
 // ── Auth user (attached to req.user by middleware) ────────────────────────────

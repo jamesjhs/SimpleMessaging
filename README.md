@@ -58,6 +58,8 @@ Key variables:
 | `SMTP_USER` / `SMTP_PASSWORD` | For email | SMTP credentials |
 | `TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY` | Optional | Cloudflare Turnstile (skip for dev) |
 | `APP_URL` | For email | Full public URL (e.g. `https://chat.example.com`) |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | For web push | Required before the admin can enable push notifications |
+| `TRUST_PROXY` | Optional | Trusted proxy hop count / Express trust-proxy value (set to `1` behind one reverse proxy) |
 | `PORT` | Optional | HTTP port (default: 3333) |
 
 ### 4. Run
@@ -77,6 +79,8 @@ npm run build
 ```
 
 The app listens on `http://localhost:3333` by default.
+
+Push notifications remain off by default. To use them, the administrator must enable both PWA support and push notifications in the admin panel after configuring VAPID keys, and each user must install the PWA on their device before opting in from the in-app settings panel.
 
 ---
 
@@ -114,6 +118,7 @@ public/
 - The database file at `data/tls.db` is AES-256 encrypted (SQLCipher)
 - Session tokens are 32-byte cryptographically random values stored in the DB
 - Passwords are hashed with `crypto.scrypt` (N=16384, 64-byte output)
+- Session cookies are `Secure` whenever the request is HTTPS (including TLS terminated at a trusted reverse proxy)
 - Deleted messages retain their content in the DB for admin audit; only access is revoked
 - The `/uploads/` route requires a valid session cookie
 - COOP + COEP headers are set to enable SharedArrayBuffer for FFmpeg WASM

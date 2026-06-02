@@ -6,16 +6,46 @@
 import { Router, Request, Response }    from 'express';
 import multer, { MulterError }          from 'multer';
 import sharp                            from 'sharp';
+import webpush                          from 'web-push';
 import path                             from 'path';
 import fs                               from 'fs';
 import crypto                           from 'crypto';
 import { getDb, getSetting }            from '../db';
 import { requireAuth }                  from '../lib/auth';
 import { rateLimiter }                  from '../lib/rateLimiter';
-import type { DbMessage, ApiPost }      from '../types';
+import type { DbMessage, ApiPost, DbUserPreferences } from '../types';
 
 const router      = Router();
 const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
+
+// ── VAPID initialisation ──────────────────────────────────────────────────────
+
+const VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY  ?? '';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY ?? '';
+
+if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    `mailto:${process.env.SMTP_FROM?.replace(/.*<(.+)>/, '$1') ?? 'noreply@localhost'}`,
+    VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY,
+  );
+}
+
+function isPwaEnabled(): boolean {
+  return getSetting('pwa_enabled') === '1';
+}
+
+function isPushAdminEnabled(): boolean {
+  return getSetting('push_notifications_enabled') === '1';
+}
+
+function isPushConfigured(): boolean {
+  return Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+}
+
+function isPushAvailable(): boolean {
+  return isPwaEnabled() && isPushAdminEnabled() && isPushConfigured();
+}
 
 // In-memory typing state (transient – not persisted)
 const typingUsers = new Map<string, number>(); // displayName → timestamp
@@ -40,7 +70,7 @@ const upload = multer({
 
 // ── Helper: DB row → API post object ─────────────────────────────────────────
 
-function rowToPost(row: DbMessage): ApiPost {
+function rowToPost(row: DbMessage, requestingUserId?: number): ApiPost {
   const db = getDb();
 
   const seenBy = (db.prepare(`
@@ -64,11 +94,22 @@ function rowToPost(row: DbMessage): ApiPost {
   }
   const reactions = [...reactionsMap.entries()].map(([emoji, users]) => ({ emoji, users }));
 
+  // For view-once messages, withhold the file path once the requesting user
+  // has already opened it.  Admins always receive the path (no view record is
+  // written for them) so that moderation workflows are not broken.
+  let imagePath = row.image_path ?? null;
+  if (row.view_once === 1 && imagePath && requestingUserId !== undefined) {
+    const alreadyViewed = db.prepare(
+      'SELECT 1 FROM message_views WHERE message_id = ? AND user_id = ?',
+    ).get(row.id, requestingUserId);
+    if (alreadyViewed) imagePath = null;
+  }
+
   return {
     id:        row.id,
     user:      row.display_name ?? '',
     text:      row.text ?? '',
-    imagePath: row.image_path ?? null,
+    imagePath,
     viewOnce:  row.view_once  === 1,
     isBlurred: row.is_blurred === 1,
     createdAt: row.created_at,
@@ -95,20 +136,22 @@ router.get('/me', requireAuth, (req: Request, res: Response): void => {
 
 router.get('/config', (_req: Request, res: Response): void => {
   res.json({
-    siteTitle:           getSetting('site_title')            ?? 'TLS',
-    mainHeader:          getSetting('main_header')           ?? 'TLS',
-    readStatusSeen:      getSetting('read_status_seen')      ?? '✓✓',
-    readStatusUnread:    getSetting('read_status_unread')    ?? '✓',
-    deleteButton:        getSetting('delete_button')         ?? '✗',
-    replyButton:         getSetting('reply_button')          ?? '↩',
-    enableDeleteButton:  getSetting('enable_delete_button') !== '0',
-    enableViewOnce:      getSetting('enable_view_once')     !== '0',
-    enableBlur:          getSetting('enable_blur')          !== '0',
-    enableEmergencyExit: getSetting('enable_emergency_exit') !== '0',
-    enableReport:        getSetting('report_enabled')        === '1',
-    pwaEnabled:          getSetting('pwa_enabled')           === '1',
-    turnstileSiteKey:    process.env.TURNSTILE_SITE_KEY      ?? null,
-    chatIconUrl:         getSetting('chat_icon_url')         ?? null,
+    siteTitle:                  getSetting('site_title')            ?? 'TLS',
+    mainHeader:                 getSetting('main_header')           ?? 'TLS',
+    readStatusSeen:             getSetting('read_status_seen')      ?? '✓✓',
+    readStatusUnread:           getSetting('read_status_unread')    ?? '✓',
+    deleteButton:               getSetting('delete_button')         ?? '✗',
+    replyButton:                getSetting('reply_button')          ?? '↩',
+    enableDeleteButton:         getSetting('enable_delete_button') !== '0',
+    enableViewOnce:             getSetting('enable_view_once')     !== '0',
+    enableBlur:                 getSetting('enable_blur')          !== '0',
+    enableEmergencyExit:        getSetting('enable_emergency_exit') !== '0',
+    enableReport:               getSetting('report_enabled')        === '1',
+    pwaEnabled:                 getSetting('pwa_enabled')           === '1',
+    pushNotificationsEnabled:   getSetting('push_notifications_enabled') === '1',
+    vapidPublicKey:             VAPID_PUBLIC_KEY || null,
+    turnstileSiteKey:           process.env.TURNSTILE_SITE_KEY      ?? null,
+    chatIconUrl:                getSetting('chat_icon_url')         ?? null,
   });
 });
 
@@ -152,7 +195,11 @@ router.get('/messages', requireAuth, (req: Request, res: Response): void => {
   for (const u of userRows) lastSeen[u.display_name] = u.last_seen;
 
   const typing = [...typingUsers.keys()].filter(n => n !== req.user!.display_name);
-  const posts  = rows.map(rowToPost);
+  // Pass the requesting user's ID so view-once images are withheld after first
+  // view.  Admins receive full imagePaths for moderation; no view record is
+  // written for them so requestingUserId stays undefined.
+  const viewingUserId = req.user!.role !== 'admin' ? req.user!.id : undefined;
+  const posts  = rows.map(row => rowToPost(row, viewingUserId));
 
   res.json({ posts, total: posts.length, typing, lastSeen });
 });
@@ -238,6 +285,36 @@ router.post(
       parseInt(submittedAt ?? '', 10) || now,
     );
 
+    // Dispatch push notifications to all other subscribed users (fire-and-forget)
+    if (isPushAvailable()) {
+      const senderName = req.user!.display_name;
+      const preview    = text?.trim()
+        ? (text.trim().length > 80 ? text.trim().slice(0, 80) + '…' : text.trim())
+        : '📎 Media';
+      const payload = JSON.stringify({ title: senderName, body: preview });
+
+      const subs = getDb().prepare(`
+        SELECT ps.endpoint, ps.p256dh, ps.auth
+        FROM push_subscriptions ps
+        JOIN users u ON u.id = ps.user_id
+        WHERE ps.user_id != ? AND u.enabled = 1
+      `).all(req.user!.id) as Array<{ endpoint: string; p256dh: string; auth: string }>;
+
+      for (const sub of subs) {
+        webpush.sendNotification(
+          { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+          payload,
+        ).catch(err => {
+          // Remove stale subscriptions (410 Gone / 404 Not Found)
+          if (err.statusCode === 410 || err.statusCode === 404) {
+            getDb().prepare(
+              'DELETE FROM push_subscriptions WHERE endpoint = ?',
+            ).run(sub.endpoint);
+          }
+        });
+      }
+    }
+
     res.status(201).json({ success: true });
   },
 );
@@ -277,10 +354,19 @@ router.post('/messages/:id/view', requireAuth, (req: Request, res: Response): vo
   if (!msg) { res.sendStatus(404); return; }
 
   if (msg.view_once) {
-    try {
-      db.prepare('INSERT OR IGNORE INTO message_views (message_id, user_id, viewed_at) VALUES (?, ?, ?)')
-        .run(msg.id, req.user!.id, Date.now());
-    } catch { /* duplicate view – ignore */ }
+    // Enforce true one-time access: once a user has viewed the message the
+    // image path is never returned again.
+    const alreadyViewed = db.prepare(
+      'SELECT 1 FROM message_views WHERE message_id = ? AND user_id = ?',
+    ).get(msg.id, req.user!.id);
+
+    if (alreadyViewed) {
+      res.status(403).json({ error: 'Message already viewed' });
+      return;
+    }
+
+    db.prepare('INSERT INTO message_views (message_id, user_id, viewed_at) VALUES (?, ?, ?)')
+      .run(msg.id, req.user!.id, Date.now());
   }
 
   res.json({ imagePath: msg.image_path });
@@ -335,11 +421,12 @@ router.post('/typing', requireAuth, (req: Request, res: Response): void => {
 router.get('/preferences', requireAuth, (req: Request, res: Response): void => {
   const db  = getDb();
   const row = db.prepare('SELECT * FROM user_preferences WHERE user_id = ?')
-    .get(req.user!.id) as { colour_scheme: string | null; enter_to_send: 0 | 1; font_size: number | null } | undefined;
+    .get(req.user!.id) as DbUserPreferences | undefined;
 
   res.json({
     scheme:      row?.colour_scheme ?? 'default',
     enterToSend: row?.enter_to_send === 1,
+    pushEnabled: row?.push_enabled === 1,
     fontSize:    row?.font_size ?? 15,
   });
 });
@@ -347,9 +434,10 @@ router.get('/preferences', requireAuth, (req: Request, res: Response): void => {
 // ── POST /api/preferences ─────────────────────────────────────────────────────
 
 router.post('/preferences', requireAuth, (req: Request, res: Response): void => {
-  const { scheme, enterToSend, fontSize } = req.body as {
+  const { scheme, enterToSend, pushEnabled, fontSize } = req.body as {
     scheme?:      string;
     enterToSend?: boolean;
+    pushEnabled?: boolean;
     fontSize?:    number;
   };
 
@@ -363,13 +451,14 @@ router.post('/preferences', requireAuth, (req: Request, res: Response): void => 
 
   const db  = getDb();
   const now = Date.now();
-  const row = db.prepare('SELECT * FROM user_preferences WHERE user_id = ?').get(req.user!.id);
+  const row = db.prepare('SELECT * FROM user_preferences WHERE user_id = ?').get(req.user!.id) as DbUserPreferences | undefined;
 
   if (row) {
     const updates: string[] = [];
     const vals:    unknown[] = [];
     if (scheme      !== undefined) { updates.push('colour_scheme = ?'); vals.push(String(scheme)); }
     if (enterToSend !== undefined) { updates.push('enter_to_send = ?'); vals.push(enterToSend ? 1 : 0); }
+    if (pushEnabled !== undefined) { updates.push('push_enabled = ?');   vals.push(pushEnabled ? 1 : 0); }
     if (fontSize    !== undefined) { updates.push('font_size = ?');     vals.push(Math.round(Number(fontSize))); }
     if (updates.length > 0) {
       updates.push('updated_at = ?');
@@ -378,8 +467,15 @@ router.post('/preferences', requireAuth, (req: Request, res: Response): void => 
     }
   } else {
     db.prepare(
-      'INSERT INTO user_preferences (user_id, colour_scheme, enter_to_send, font_size, updated_at) VALUES (?, ?, ?, ?, ?)',
-    ).run(req.user!.id, scheme ?? 'default', enterToSend ? 1 : 0, fontSize !== undefined ? Math.round(Number(fontSize)) : null, now);
+      'INSERT INTO user_preferences (user_id, colour_scheme, enter_to_send, push_enabled, font_size, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(
+      req.user!.id,
+      scheme ?? 'default',
+      enterToSend ? 1 : 0,
+      pushEnabled ? 1 : 0,
+      fontSize !== undefined ? Math.round(Number(fontSize)) : null,
+      now,
+    );
   }
 
   res.sendStatus(204);
@@ -436,6 +532,68 @@ router.delete('/messages/:id/react', requireAuth, (req: Request, res: Response):
   db.prepare(
     'DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?',
   ).run(req.params.id, req.user!.id, emoji);
+
+  res.sendStatus(204);
+});
+
+// ── GET /api/push/vapid-public-key ────────────────────────────────────────────
+
+router.get('/push/vapid-public-key', (_req: Request, res: Response): void => {
+  if (!VAPID_PUBLIC_KEY) {
+    res.status(503).json({ error: 'Push notifications not configured' });
+    return;
+  }
+  res.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+// ── POST /api/push/subscribe ──────────────────────────────────────────────────
+
+router.post('/push/subscribe', requireAuth, (req: Request, res: Response): void => {
+  if (!isPushConfigured()) {
+    res.status(503).json({ error: 'Push notifications not configured on this server' });
+    return;
+  }
+  if (!isPwaEnabled()) {
+    res.status(403).json({ error: 'Install the PWA before enabling push notifications.' });
+    return;
+  }
+  if (!isPushAdminEnabled()) {
+    res.status(403).json({ error: 'Push notifications are not enabled' });
+    return;
+  }
+
+  const { endpoint, keys } = req.body as {
+    endpoint?: string;
+    keys?: { p256dh?: string; auth?: string };
+  };
+
+  if (!endpoint || !keys?.p256dh || !keys?.auth) {
+    res.status(400).json({ error: 'endpoint and keys (p256dh, auth) are required' });
+    return;
+  }
+
+  const db = getDb();
+  db.prepare(`
+    INSERT OR REPLACE INTO push_subscriptions (user_id, endpoint, p256dh, auth, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(req.user!.id, endpoint, keys.p256dh, keys.auth, Date.now());
+
+  res.status(201).json({ status: 'subscribed' });
+});
+
+// ── DELETE /api/push/unsubscribe ──────────────────────────────────────────────
+
+router.delete('/push/unsubscribe', requireAuth, (req: Request, res: Response): void => {
+  const { endpoint } = req.body as { endpoint?: string };
+
+  if (!endpoint) {
+    // Remove all subscriptions for this user
+    getDb().prepare('DELETE FROM push_subscriptions WHERE user_id = ?').run(req.user!.id);
+  } else {
+    getDb().prepare(
+      'DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?',
+    ).run(req.user!.id, endpoint);
+  }
 
   res.sendStatus(204);
 });

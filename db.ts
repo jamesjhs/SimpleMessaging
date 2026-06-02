@@ -116,6 +116,7 @@ export async function initDb(): Promise<DB> {
       user_id        INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       colour_scheme  TEXT,
       enter_to_send  INTEGER NOT NULL DEFAULT 0,
+      push_enabled   INTEGER NOT NULL DEFAULT 0,
       updated_at     INTEGER
     );
 
@@ -132,6 +133,17 @@ export async function initDb(): Promise<DB> {
       PRIMARY KEY (message_id, user_id, emoji)
     );
 
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint   TEXT    NOT NULL,
+      p256dh     TEXT    NOT NULL,
+      auth       TEXT    NOT NULL,
+      created_at INTEGER NOT NULL,
+      UNIQUE (user_id, endpoint)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);
     CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
     CREATE INDEX IF NOT EXISTS idx_messages_user    ON messages(user_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_exp     ON sessions(expires_at);
@@ -144,6 +156,7 @@ export async function initDb(): Promise<DB> {
     `ALTER TABLE users ADD COLUMN locked_until          INTEGER`,
     `ALTER TABLE users ADD COLUMN login_locked          INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE user_preferences ADD COLUMN font_size  INTEGER`,
+    `ALTER TABLE user_preferences ADD COLUMN push_enabled INTEGER NOT NULL DEFAULT 0`,
   ]) {
     try { db.exec(sql); } catch { /* column already exists – safe to ignore */ }
   }
@@ -175,8 +188,9 @@ export async function initDb(): Promise<DB> {
 
   // ── Default settings ──────────────────────────────────────────────────────
   const defaults: Record<string, string> = {
-    pwa_enabled:            '0',
-    report_enabled:         '0',
+    pwa_enabled:                '0',
+    report_enabled:             '0',
+    push_notifications_enabled: '0',
     site_title:             'TLS',
     main_header:            'TLS',
     enable_view_once:       '1',

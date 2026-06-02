@@ -42,3 +42,44 @@ self.addEventListener('fetch', event => {
       .catch(() => caches.match(event.request))
   );
 });
+
+// ── Push notifications ────────────────────────────────────────────────────────
+
+self.addEventListener('push', event => {
+  let title = 'TLS';
+  let body  = 'New message';
+  let icon  = '/icon.svg';
+
+  try {
+    if (event.data) {
+      const data = event.data.json();
+      if (data.title) title = data.title;
+      if (data.body)  body  = data.body;
+    }
+  } catch { /* ignore parse errors */ }
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      icon,
+      badge: icon,
+      tag:   'tls-message',
+      renotify: true,
+    })
+  );
+});
+
+// Focus or open the app when a notification is clicked
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windowClients => {
+      for (const client of windowClients) {
+        if (client.url.includes(self.location.origin) && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      if (clients.openWindow) return clients.openWindow('/');
+    })
+  );
+});
