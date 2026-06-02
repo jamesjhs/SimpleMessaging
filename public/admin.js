@@ -83,8 +83,10 @@ function openCreateUser() {
   document.getElementById('user-enabled').checked  = true;
   document.getElementById('password-label').textContent = 'Password *';
   document.getElementById('user-username').removeAttribute('readonly');
-  document.getElementById('password-hint').style.display = 'none';
-  document.getElementById('invite-btn').style.display    = 'none';
+  document.getElementById('password-hint').style.display  = 'none';
+  document.getElementById('invite-btn').style.display     = 'none';
+  document.getElementById('user-locked-label').style.display = 'none';
+  document.getElementById('user-locked').style.display       = 'none';
   setError('user-modal-error', '');
   document.getElementById('user-modal').style.display = 'flex';
 }
@@ -104,6 +106,10 @@ async function openEditUser(id) {
   document.getElementById('user-password').value    = '';
   document.getElementById('user-twofa').checked     = !!u.two_fa_enabled;
   document.getElementById('user-enabled').checked   = !!u.enabled;
+  // Show the locked toggle only when editing; uncheck means "unlock on save"
+  document.getElementById('user-locked').checked              = !!u.login_locked;
+  document.getElementById('user-locked-label').style.display = 'block';
+  document.getElementById('user-locked').style.display       = 'block';
   document.getElementById('password-label').textContent = 'New Password';
   document.getElementById('user-username').setAttribute('readonly', 'true');
   document.getElementById('password-hint').style.display  = 'block';
@@ -128,11 +134,12 @@ async function saveUser(e) {
   const password    = document.getElementById('user-password').value;
   const twoFa       = document.getElementById('user-twofa').checked;
   const enabled     = document.getElementById('user-enabled').checked;
+  const locked      = document.getElementById('user-locked').checked;
 
   if (!isEdit && !password) { setError('user-modal-error', 'Password is required for new users.'); return; }
 
   if (isEdit) {
-    const body = { displayName, email: email || null, role, twoFaEnabled: twoFa, enabled };
+    const body = { displayName, email: email || null, role, twoFaEnabled: twoFa, enabled, loginLocked: locked };
     if (password) body.newPassword = password;
     const res = await apiFetch(`/api/admin/users/${id}`, {
       method:  'PATCH',

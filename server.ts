@@ -39,6 +39,23 @@ app.use((_req: Request, res: Response, next: NextFunction): void => {
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
+// ── Block direct access to admin static files ─────────────────────────────────
+// The protected /admin route is the only legitimate entry-point for admin HTML;
+// serving admin.html (and its assets) as plain static files would let any
+// authenticated or unauthenticated user load the admin shell by URL.
+const ADMIN_STATIC = new Set(['/admin.html', '/admin.js', '/admin.css']);
+app.use((req: Request, res: Response, next: NextFunction): void => {
+  if (ADMIN_STATIC.has(req.path)) {
+    const cookies = parseCookies(req);
+    const user    = resolveSession(cookies.session);
+    if (!user || user.role !== 'admin') {
+      res.redirect('/?redirect=admin');
+      return;
+    }
+  }
+  next();
+});
+
 // ── Public static files ───────────────────────────────────────────────────────
 // index.html is served with no-cache so browsers always revalidate and pick up
 // new asset fingerprints immediately, even when the Service Worker is bypassed.

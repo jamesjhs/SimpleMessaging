@@ -70,7 +70,7 @@ const upload = multer({
 
 // ── Helper: DB row → API post object ─────────────────────────────────────────
 
-function rowToPost(row: DbMessage): ApiPost {
+function rowToPost(row: DbMessage, requestingUserId?: number): ApiPost {
   const db = getDb();
 
   const seenBy = (db.prepare(`
@@ -94,11 +94,22 @@ function rowToPost(row: DbMessage): ApiPost {
   }
   const reactions = [...reactionsMap.entries()].map(([emoji, users]) => ({ emoji, users }));
 
+  // For view-once messages, withhold the file path once the requesting user
+  // has already opened it.  Admins always receive the path (no view record is
+  // written for them) so that moderation workflows are not broken.
+  let imagePath = row.image_path ?? null;
+  if (row.view_once === 1 && imagePath && requestingUserId !== undefined) {
+    const alreadyViewed = db.prepare(
+      'SELECT 1 FROM message_views WHERE message_id = ? AND user_id = ?',
+    ).get(row.id, requestingUserId);
+    if (alreadyViewed) imagePath = null;
+  }
+
   return {
     id:        row.id,
     user:      row.display_name ?? '',
     text:      row.text ?? '',
-    imagePath: row.image_path ?? null,
+    imagePath,
     viewOnce:  row.view_once  === 1,
     isBlurred: row.is_blurred === 1,
     createdAt: row.created_at,
@@ -184,7 +195,11 @@ router.get('/messages', requireAuth, (req: Request, res: Response): void => {
   for (const u of userRows) lastSeen[u.display_name] = u.last_seen;
 
   const typing = [...typingUsers.keys()].filter(n => n !== req.user!.display_name);
-  const posts  = rows.map(rowToPost);
+  // Pass the requesting user's ID so view-once images are withheld after first
+  // view.  Admins receive full imagePaths for moderation; no view record is
+  // written for them so requestingUserId stays undefined.
+  const viewingUserId = req.user!.role !== 'admin' ? req.user!.id : undefined;
+  const posts  = rows.map(row => rowToPost(row, viewingUserId));
 
   res.json({ posts, total: posts.length, typing, lastSeen });
 });
@@ -339,10 +354,19 @@ router.post('/messages/:id/view', requireAuth, (req: Request, res: Response): vo
   if (!msg) { res.sendStatus(404); return; }
 
   if (msg.view_once) {
-    try {
-      db.prepare('INSERT OR IGNORE INTO message_views (message_id, user_id, viewed_at) VALUES (?, ?, ?)')
-        .run(msg.id, req.user!.id, Date.now());
-    } catch { /* duplicate view – ignore */ }
+    // Enforce true one-time access: once a user has viewed the message the
+    // image path is never returned again.
+    const alreadyViewed = db.prepare(
+      'SELECT 1 FROM message_views WHERE message_id = ? AND user_id = ?',
+    ).get(msg.id, req.user!.id);
+
+    if (alreadyViewed) {
+      res.status(403).json({ error: 'Message already viewed' });
+      return;
+    }
+
+    db.prepare('INSERT INTO message_views (message_id, user_id, viewed_at) VALUES (?, ?, ?)')
+      .run(msg.id, req.user!.id, Date.now());
   }
 
   res.json({ imagePath: msg.image_path });
