@@ -13,7 +13,7 @@ import crypto                           from 'crypto';
 import { getDb, getSetting }            from '../db';
 import { requireAuth }                  from '../lib/auth';
 import { rateLimiter }                  from '../lib/rateLimiter';
-import type { DbMessage, ApiPost }      from '../types';
+import type { DbMessage, ApiPost, DbUserPreferences } from '../types';
 
 const router      = Router();
 const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
@@ -29,6 +29,22 @@ if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
     VAPID_PUBLIC_KEY,
     VAPID_PRIVATE_KEY,
   );
+}
+
+function isPwaEnabled(): boolean {
+  return getSetting('pwa_enabled') === '1';
+}
+
+function isPushAdminEnabled(): boolean {
+  return getSetting('push_notifications_enabled') === '1';
+}
+
+function isPushConfigured(): boolean {
+  return Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+}
+
+function isPushAvailable(): boolean {
+  return isPwaEnabled() && isPushAdminEnabled() && isPushConfigured();
 }
 
 // In-memory typing state (transient – not persisted)
@@ -255,7 +271,7 @@ router.post(
     );
 
     // Dispatch push notifications to all other subscribed users (fire-and-forget)
-    if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY && getSetting('push_notifications_enabled') === '1') {
+    if (isPushAvailable()) {
       const senderName = req.user!.display_name;
       const preview    = text?.trim()
         ? (text.trim().length > 80 ? text.trim().slice(0, 80) + '…' : text.trim())
@@ -381,11 +397,12 @@ router.post('/typing', requireAuth, (req: Request, res: Response): void => {
 router.get('/preferences', requireAuth, (req: Request, res: Response): void => {
   const db  = getDb();
   const row = db.prepare('SELECT * FROM user_preferences WHERE user_id = ?')
-    .get(req.user!.id) as { colour_scheme: string | null; enter_to_send: 0 | 1; font_size: number | null } | undefined;
+    .get(req.user!.id) as DbUserPreferences | undefined;
 
   res.json({
     scheme:      row?.colour_scheme ?? 'default',
     enterToSend: row?.enter_to_send === 1,
+    pushEnabled: row?.push_enabled === 1,
     fontSize:    row?.font_size ?? 15,
   });
 });
@@ -393,9 +410,10 @@ router.get('/preferences', requireAuth, (req: Request, res: Response): void => {
 // ── POST /api/preferences ─────────────────────────────────────────────────────
 
 router.post('/preferences', requireAuth, (req: Request, res: Response): void => {
-  const { scheme, enterToSend, fontSize } = req.body as {
+  const { scheme, enterToSend, pushEnabled, fontSize } = req.body as {
     scheme?:      string;
     enterToSend?: boolean;
+    pushEnabled?: boolean;
     fontSize?:    number;
   };
 
@@ -409,13 +427,14 @@ router.post('/preferences', requireAuth, (req: Request, res: Response): void => 
 
   const db  = getDb();
   const now = Date.now();
-  const row = db.prepare('SELECT * FROM user_preferences WHERE user_id = ?').get(req.user!.id);
+  const row = db.prepare('SELECT * FROM user_preferences WHERE user_id = ?').get(req.user!.id) as DbUserPreferences | undefined;
 
   if (row) {
     const updates: string[] = [];
     const vals:    unknown[] = [];
     if (scheme      !== undefined) { updates.push('colour_scheme = ?'); vals.push(String(scheme)); }
     if (enterToSend !== undefined) { updates.push('enter_to_send = ?'); vals.push(enterToSend ? 1 : 0); }
+    if (pushEnabled !== undefined) { updates.push('push_enabled = ?');   vals.push(pushEnabled ? 1 : 0); }
     if (fontSize    !== undefined) { updates.push('font_size = ?');     vals.push(Math.round(Number(fontSize))); }
     if (updates.length > 0) {
       updates.push('updated_at = ?');
@@ -424,8 +443,15 @@ router.post('/preferences', requireAuth, (req: Request, res: Response): void => 
     }
   } else {
     db.prepare(
-      'INSERT INTO user_preferences (user_id, colour_scheme, enter_to_send, font_size, updated_at) VALUES (?, ?, ?, ?, ?)',
-    ).run(req.user!.id, scheme ?? 'default', enterToSend ? 1 : 0, fontSize !== undefined ? Math.round(Number(fontSize)) : null, now);
+      'INSERT INTO user_preferences (user_id, colour_scheme, enter_to_send, push_enabled, font_size, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(
+      req.user!.id,
+      scheme ?? 'default',
+      enterToSend ? 1 : 0,
+      pushEnabled ? 1 : 0,
+      fontSize !== undefined ? Math.round(Number(fontSize)) : null,
+      now,
+    );
   }
 
   res.sendStatus(204);
@@ -499,11 +525,15 @@ router.get('/push/vapid-public-key', (_req: Request, res: Response): void => {
 // ── POST /api/push/subscribe ──────────────────────────────────────────────────
 
 router.post('/push/subscribe', requireAuth, (req: Request, res: Response): void => {
-  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+  if (!isPushConfigured()) {
     res.status(503).json({ error: 'Push notifications not configured on this server' });
     return;
   }
-  if (getSetting('push_notifications_enabled') !== '1') {
+  if (!isPwaEnabled()) {
+    res.status(403).json({ error: 'Install the PWA before enabling push notifications.' });
+    return;
+  }
+  if (!isPushAdminEnabled()) {
     res.status(403).json({ error: 'Push notifications are not enabled' });
     return;
   }

@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, interactive-widget=resizes-content">
   <title>Loading…</title>
+  <link rel="manifest" href="/manifest.json">
   <link rel="icon" type="image/svg+xml" href="/icon.svg">
   <link rel="apple-touch-icon" href="/icon.svg">
   <link rel="stylesheet" href="style.css" />
@@ -118,6 +119,12 @@
     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 0;font-size:0.9rem;">
       <input type="checkbox" id="enter-to-send-toggle" onchange="toggleEnterToSend(this.checked)"> ⏎ Enter to Send
     </label>
+
+    <div id="pwa-install-row" style="display:none;">
+      <hr class="panel-divider">
+      <button id="install-pwa-btn" class="panel-action-btn" onclick="promptPwaInstall()">📲 Install App</button>
+      <div id="install-pwa-msg" style="font-size:0.75rem;color:#aaa;padding:6px 0 4px;"></div>
+    </div>
 
     <div id="push-notification-row" style="display:none;">
       <hr class="panel-divider">

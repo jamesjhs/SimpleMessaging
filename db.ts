@@ -116,6 +116,7 @@ export async function initDb(): Promise<DB> {
       user_id        INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       colour_scheme  TEXT,
       enter_to_send  INTEGER NOT NULL DEFAULT 0,
+      push_enabled   INTEGER NOT NULL DEFAULT 0,
       updated_at     INTEGER
     );
 
@@ -155,6 +156,7 @@ export async function initDb(): Promise<DB> {
     `ALTER TABLE users ADD COLUMN locked_until          INTEGER`,
     `ALTER TABLE users ADD COLUMN login_locked          INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE user_preferences ADD COLUMN font_size  INTEGER`,
+    `ALTER TABLE user_preferences ADD COLUMN push_enabled INTEGER NOT NULL DEFAULT 0`,
   ]) {
     try { db.exec(sql); } catch { /* column already exists – safe to ignore */ }
   }

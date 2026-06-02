@@ -1,5 +1,7 @@
 'use strict';
 
+let adminSettingsMeta = { vapidConfigured: false };
+
 // ── Navigation ────────────────────────────────────────────────────────────────
 
 function showSection(name) {
@@ -265,6 +267,7 @@ async function loadSettings() {
   if (!res.ok) { setError('settings-error', 'Failed to load settings.'); return; }
   const s   = await res.json();
   const form = document.getElementById('settings-form');
+  adminSettingsMeta.vapidConfigured = s.vapid_configured === '1';
 
   Object.entries(s).forEach(([key, val]) => {
     const el = form.elements[key];
@@ -278,6 +281,32 @@ async function loadSettings() {
     const preview = document.getElementById('icon-preview');
     if (preview) preview.src = s.chat_icon_url + '?t=' + Date.now();
   }
+
+  updatePushSettingsUi();
+}
+
+function updatePushSettingsUi() {
+  const pwaToggle  = document.getElementById('pwa-enabled-toggle');
+  const pushToggle = document.getElementById('push-enabled-toggle');
+  const help       = document.getElementById('push-settings-help');
+  if (!pwaToggle || !pushToggle || !help) return;
+
+  const pwaEnabled      = !!pwaToggle.checked;
+  const vapidConfigured = !!adminSettingsMeta.vapidConfigured;
+  const pushAllowed     = pwaEnabled && vapidConfigured;
+
+  pushToggle.disabled = !pushAllowed;
+  if (!pushAllowed) pushToggle.checked = false;
+
+  if (!vapidConfigured) {
+    help.textContent = 'Push notifications stay disabled until VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are configured on the server.';
+    return;
+  }
+  if (!pwaEnabled) {
+    help.textContent = 'Enable the PWA first. Users can only opt in to push after installing the app on their device.';
+    return;
+  }
+  help.textContent = 'Push is ready to be enabled. Users must still install the PWA and opt in individually from their settings panel.';
 }
 
 async function saveSettings(e) {
@@ -301,13 +330,18 @@ async function saveSettings(e) {
     body:    JSON.stringify(body),
   });
 
-  if (!res.ok) { setError('settings-error', 'Failed to save settings.'); return; }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    setError('settings-error', data.error || 'Failed to save settings.');
+    return;
+  }
 
   const msg = document.getElementById('settings-saved-msg');
   if (msg) {
     msg.style.display = 'inline';
     setTimeout(() => { msg.style.display = 'none'; }, 2500);
   }
+  loadSettings();
 }
 
 // ── Import (two-step: preview → commit) ───────────────────────────────────────
@@ -443,6 +477,9 @@ function esc(str) {
 document.getElementById('user-modal').addEventListener('click', e => {
   if (e.target === document.getElementById('user-modal')) closeUserModal();
 });
+
+const adminPwaToggle = document.getElementById('pwa-enabled-toggle');
+if (adminPwaToggle) adminPwaToggle.addEventListener('change', updatePushSettingsUi);
 
 // Load users on page open
 loadUsers();

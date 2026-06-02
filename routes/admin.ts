@@ -17,6 +17,10 @@ const router  = Router();
 const jsonUp  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const imageUp = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
+function hasVapidConfiguration(): boolean {
+  return Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+}
+
 // All routes in this file require admin role, with moderate rate limiting
 router.use(
   requireAdmin,
@@ -239,6 +243,7 @@ router.get('/settings', (_req: Request, res: Response): void => {
   ];
   const out: Record<string, string | null> = {};
   for (const k of keys) out[k] = getSetting(k);
+  out.vapid_configured = hasVapidConfiguration() ? '1' : '0';
   res.json(out);
 });
 
@@ -246,16 +251,46 @@ router.get('/settings', (_req: Request, res: Response): void => {
 
 router.patch('/settings', (req: Request, res: Response): void => {
   const allowed = [
-    'pwa_enabled',          'report_enabled',        'push_notifications_enabled',
+    'report_enabled',
     'site_title',           'main_header',            'enable_view_once',
     'enable_blur',          'enable_emergency_exit',  'enable_delete_button',
     'delete_button',        'reply_button',           'read_status_seen',
     'read_status_unread',
   ];
   const body = req.body as Record<string, unknown>;
+
+  const requestedPwaEnabled = 'pwa_enabled' in body
+    ? String(body.pwa_enabled) === '1'
+    : getSetting('pwa_enabled') === '1';
+  const requestedPushEnabled = 'push_notifications_enabled' in body
+    ? String(body.push_notifications_enabled) === '1'
+    : getSetting('push_notifications_enabled') === '1';
+
+  if (requestedPushEnabled && !requestedPwaEnabled) {
+    res.status(400).json({ error: 'Enable the PWA before enabling push notifications.' });
+    return;
+  }
+  if (requestedPushEnabled && !hasVapidConfiguration()) {
+    res.status(400).json({ error: 'Configure VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY before enabling push notifications.' });
+    return;
+  }
+
   for (const k of allowed) {
     if (k in body) setSetting(k, String(body[k]));
   }
+
+  if ('pwa_enabled' in body) {
+    setSetting('pwa_enabled', requestedPwaEnabled ? '1' : '0');
+  }
+
+  const finalPushEnabled = requestedPwaEnabled && requestedPushEnabled;
+  if ('push_notifications_enabled' in body || !requestedPwaEnabled) {
+    setSetting('push_notifications_enabled', finalPushEnabled ? '1' : '0');
+  }
+  if (!finalPushEnabled) {
+    getDb().prepare('DELETE FROM push_subscriptions').run();
+  }
+
   res.sendStatus(204);
 });
 

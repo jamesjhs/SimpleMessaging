@@ -199,6 +199,7 @@ Per-user UI settings.
 | `user_id` | INTEGER PK FK → users.id | |
 | `colour_scheme` | TEXT | `'default'`, `'ocean'`, `'purple'`, `'warm'`, `'forest'` |
 | `enter_to_send` | INTEGER | `1` = Enter key submits the form |
+| `push_enabled` | INTEGER | User's persisted preference for push notifications on their account |
 | `updated_at` | INTEGER | |
 
 #### `app_settings`
@@ -207,6 +208,7 @@ Key/value store for admin-configurable settings.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `pwa_enabled` | `'0'` | Enable PWA manifest and service worker |
+| `push_notifications_enabled` | `'0'` | Allow installed PWA clients to opt in to push notifications |
 | `report_enabled` | `'0'` | Show report button on received messages |
 | `site_title` | `'TLS'` | Browser tab title |
 | `main_header` | `'TLS'` | Chat header text (also the emergency-exit trigger) |
@@ -465,6 +467,13 @@ The service worker (`public/sw.js`) implements:
 - **Fetch**: network-first for all requests, falling back to cache for shell assets. API calls, uploads, and admin routes bypass the cache entirely.
 
 **Automatic cache busting on deploy**: The server reads `sw.js` at startup and replaces the literal string `tls-__APP_VERSION__` with the actual package version (e.g. `tls-0.2.0`). The browser then sees a changed SW script, triggering an update cycle. The client-side `updatefound` handler reloads the page automatically once the new SW is installed.
+
+### Install + Push Onboarding
+
+- The page links to `/manifest.json`, so browsers can offer a real install flow when `pwa_enabled = '1'`.
+- Users are prompted to install the app first; the push toggle is only shown from the installed PWA context (`display-mode: standalone` / home-screen install).
+- Push can only be enabled globally when the admin has both turned on the PWA and configured `VAPID_PUBLIC_KEY` plus `VAPID_PRIVATE_KEY`.
+- If the admin disables the PWA or push notifications, stored browser subscriptions are cleared so the server stops dispatching notifications immediately.
 
 ### Icon
 

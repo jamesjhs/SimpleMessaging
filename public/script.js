@@ -5,6 +5,7 @@ let currentUser    = null;   // display name of logged-in user
 let currentRole    = null;   // 'admin' | 'user'
 let appConfig      = {};     // server-supplied config
 let enterToSend    = false;
+let pushPreferenceEnabled = false;
 let appInitialized = false;
 let refreshTimer   = null;
 let isTyping       = false;
@@ -22,6 +23,7 @@ let activePendingId   = null;
 // OTP / login state
 let otpTempToken     = null;
 let loginCooldownTimer = null;
+let deferredInstallPrompt = null;
 
 // Reaction picker state
 let reactionPickerTarget     = null; // .post element currently targeted
@@ -64,6 +66,40 @@ const postsContainer  = document.getElementById('posts');
 // ── API helper ───────────────────────────────────────────────────────────────
 function apiFetch(url, options = {}) {
   return fetch(url, { credentials: 'same-origin', ...options });
+}
+
+function isStandalonePwa() {
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+
+function updatePwaInstallUi(message = '') {
+  const installRow = document.getElementById('pwa-install-row');
+  const installBtn = document.getElementById('install-pwa-btn');
+  const installMsg = document.getElementById('install-pwa-msg');
+  if (!installRow || !installBtn || !installMsg) return;
+
+  if (!appConfig.pwaEnabled || !('serviceWorker' in navigator)) {
+    installRow.style.display = 'none';
+    installMsg.textContent = '';
+    return;
+  }
+
+  installRow.style.display = 'block';
+
+  if (isStandalonePwa()) {
+    installBtn.disabled = true;
+    installBtn.textContent = '✓ App Installed';
+    installMsg.textContent = message || 'This device already has the PWA installed.';
+    return;
+  }
+
+  installBtn.disabled = !deferredInstallPrompt;
+  installBtn.textContent = '📲 Install App';
+  installMsg.textContent = message || (
+    deferredInstallPrompt
+      ? 'Install the PWA on this device before enabling push notifications.'
+      : 'Use your browser install/share menu to add this app to the home screen.'
+  );
 }
 
 // ── Auth / Login ─────────────────────────────────────────────────────────────
@@ -335,6 +371,7 @@ async function loadPreferences() {
     const data = await res.json();
     if (data.scheme && COLOUR_SCHEMES[data.scheme]) applyColourScheme(data.scheme, false);
     enterToSend = !!data.enterToSend;
+    pushPreferenceEnabled = !!data.pushEnabled;
     const toggle = document.getElementById('enter-to-send-toggle');
     if (toggle) toggle.checked = enterToSend;
     if (data.fontSize != null) applyFontSize(data.fontSize, false);
@@ -1639,30 +1676,69 @@ function registerServiceWorker() {
 
 // ── Push notifications ────────────────────────────────────────────────────────
 
+async function savePushPreference(enabled) {
+  pushPreferenceEnabled = enabled;
+  await apiFetch('/api/preferences', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ pushEnabled: enabled }),
+  }).catch(() => {});
+}
+
+async function syncPushToggleState(statusMessage = '') {
+  const toggle   = document.getElementById('push-toggle');
+  const statusEl = document.getElementById('push-status-msg');
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+
+    if (!sub && pushPreferenceEnabled && Notification.permission === 'granted') {
+      await subscribeToPush({ requestPermission: false, silent: true });
+      sub = await reg.pushManager.getSubscription();
+    }
+
+    if (toggle) toggle.checked = !!sub;
+    if (statusEl) {
+      if (statusMessage) {
+        statusEl.textContent = statusMessage;
+        statusEl.style.display = 'block';
+      } else if (pushPreferenceEnabled && !sub) {
+        statusEl.textContent = 'Push is enabled for your account, but it still needs to be connected on this device.';
+        statusEl.style.display = 'block';
+      } else {
+        statusEl.textContent = '';
+        statusEl.style.display = 'none';
+      }
+    }
+  } catch { /* ignore */ }
+}
+
 async function initPushNotifications() {
+  updatePwaInstallUi();
+
   const row = document.getElementById('push-notification-row');
   if (!row) return;
 
-  // Only show the toggle when PWA and push are both enabled on the server,
-  // push is supported by the browser, and VAPID keys are configured.
   if (!appConfig.pwaEnabled ||
-      !appConfig.pushNotificationsEnabled ||
-      !appConfig.vapidPublicKey ||
       !('serviceWorker' in navigator) ||
       !('PushManager' in window)) {
     row.style.display = 'none';
     return;
   }
 
-  row.style.display = 'block';
+  if (!isStandalonePwa()) {
+    row.style.display = 'none';
+    return;
+  }
 
-  // Reflect current subscription state in the toggle
-  try {
-    const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription();
-    const toggle = document.getElementById('push-toggle');
-    if (toggle) toggle.checked = !!sub;
-  } catch { /* ignore */ }
+  if (!appConfig.pushNotificationsEnabled || !appConfig.vapidPublicKey) {
+    row.style.display = 'none';
+    updatePwaInstallUi('The app is installed, but push notifications are not available right now.');
+    return;
+  }
+
+  row.style.display = 'block';
+  await syncPushToggleState();
 }
 
 async function togglePushNotifications(enable) {
@@ -1670,37 +1746,60 @@ async function togglePushNotifications(enable) {
   const statusEl = document.getElementById('push-status-msg');
   if (statusEl) { statusEl.style.display = 'none'; }
 
-  if (enable) {
-    await subscribeToPush();
-  } else {
-    await unsubscribeFromPush();
-  }
-
-  // Re-read actual state from browser to keep toggle in sync
-  try {
-    const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription();
-    if (toggle) toggle.checked = !!sub;
-  } catch { /* ignore */ }
-}
-
-async function subscribeToPush() {
-  const statusEl = document.getElementById('push-status-msg');
-
-  if (!appConfig.vapidPublicKey) {
-    if (statusEl) { statusEl.textContent = 'Push notifications not available.'; statusEl.style.display = 'block'; }
+  if (enable && !isStandalonePwa()) {
+    if (toggle) toggle.checked = false;
+    if (statusEl) {
+      statusEl.textContent = 'Install the PWA on this device before enabling push notifications.';
+      statusEl.style.display = 'block';
+    }
     return;
   }
 
+  const ok = enable
+    ? await subscribeToPush()
+    : await unsubscribeFromPush();
+
+  await savePushPreference(ok ? enable : false);
+  await syncPushToggleState();
+}
+
+async function subscribeToPush(options = {}) {
+  const { requestPermission = true, silent = false } = options;
+  const statusEl = document.getElementById('push-status-msg');
+
+  if (!isStandalonePwa()) {
+    if (statusEl && !silent) {
+      statusEl.textContent = 'Install the PWA on this device before enabling push notifications.';
+      statusEl.style.display = 'block';
+    }
+    return false;
+  }
+
+  if (!appConfig.pushNotificationsEnabled || !appConfig.vapidPublicKey) {
+    if (statusEl && !silent) {
+      statusEl.textContent = 'Push notifications not available.';
+      statusEl.style.display = 'block';
+    }
+    return false;
+  }
+
   try {
-    const permission = await Notification.requestPermission();
+    let permission = Notification.permission;
     if (permission !== 'granted') {
-      if (statusEl) { statusEl.textContent = 'Notification permission denied.'; statusEl.style.display = 'block'; }
-      return;
+      if (!requestPermission) return false;
+      permission = await Notification.requestPermission();
+    }
+    if (permission !== 'granted') {
+      if (statusEl && !silent) {
+        statusEl.textContent = 'Notification permission denied.';
+        statusEl.style.display = 'block';
+      }
+      return false;
     }
 
     const reg = await navigator.serviceWorker.ready;
-    const subscription = await reg.pushManager.subscribe({
+    const existingSubscription = await reg.pushManager.getSubscription();
+    const subscription = existingSubscription || await reg.pushManager.subscribe({
       userVisibleOnly:      true,
       applicationServerKey: urlBase64ToUint8Array(appConfig.vapidPublicKey),
     });
@@ -1713,12 +1812,22 @@ async function subscribeToPush() {
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      if (statusEl) { statusEl.textContent = data.error || 'Failed to subscribe.'; statusEl.style.display = 'block'; }
-      await subscription.unsubscribe();
+      if (statusEl && !silent) {
+        statusEl.textContent = data.error || 'Failed to subscribe.';
+        statusEl.style.display = 'block';
+      }
+      if (!existingSubscription) await subscription.unsubscribe();
+      return false;
     }
+
+    return true;
   } catch (err) {
-    if (statusEl) { statusEl.textContent = 'Could not enable push notifications.'; statusEl.style.display = 'block'; }
+    if (statusEl && !silent) {
+      statusEl.textContent = 'Could not enable push notifications.';
+      statusEl.style.display = 'block';
+    }
     console.warn('[push] subscribe error:', err);
+    return false;
   }
 }
 
@@ -1734,10 +1843,46 @@ async function unsubscribeFromPush() {
       }).catch(() => {});
       await sub.unsubscribe();
     }
+    return false;
   } catch (err) {
     console.warn('[push] unsubscribe error:', err);
+    return false;
   }
 }
+
+async function promptPwaInstall() {
+  if (!deferredInstallPrompt) {
+    updatePwaInstallUi('Use your browser install/share menu to add this app to the home screen.');
+    return;
+  }
+
+  const installPrompt = deferredInstallPrompt;
+  deferredInstallPrompt = null;
+  installPrompt.prompt();
+
+  try {
+    const choice = await installPrompt.userChoice;
+    if (choice.outcome !== 'accepted') {
+      updatePwaInstallUi('Install was cancelled. You can try again any time.');
+      return;
+    }
+    updatePwaInstallUi('Finishing installation…');
+  } catch {
+    updatePwaInstallUi('Install prompt could not be completed.');
+  }
+}
+
+window.addEventListener('beforeinstallprompt', event => {
+  event.preventDefault();
+  deferredInstallPrompt = event;
+  updatePwaInstallUi();
+});
+
+window.addEventListener('appinstalled', () => {
+  deferredInstallPrompt = null;
+  updatePwaInstallUi('App installed. You can now enable push notifications below.');
+  initPushNotifications().catch(() => {});
+});
 
 /** Convert a base64url VAPID public key to Uint8Array for PushManager.subscribe */
 function urlBase64ToUint8Array(base64String) {

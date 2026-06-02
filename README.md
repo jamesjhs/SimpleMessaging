@@ -58,6 +58,7 @@ Key variables:
 | `SMTP_USER` / `SMTP_PASSWORD` | For email | SMTP credentials |
 | `TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY` | Optional | Cloudflare Turnstile (skip for dev) |
 | `APP_URL` | For email | Full public URL (e.g. `https://chat.example.com`) |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | For web push | Required before the admin can enable push notifications |
 | `PORT` | Optional | HTTP port (default: 3333) |
 
 ### 4. Run
@@ -77,6 +78,8 @@ npm run build
 ```
 
 The app listens on `http://localhost:3333` by default.
+
+Push notifications remain off by default. To use them, the administrator must enable both PWA support and push notifications in the admin panel after configuring VAPID keys, and each user must install the PWA on their device before opting in from the in-app settings panel.
 
 ---
 
