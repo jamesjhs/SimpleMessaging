@@ -21,8 +21,9 @@ const pendingMessages = new Map();
 let activePendingId   = null;
 
 // OTP / login state
-let otpTempToken     = null;
-let loginCooldownTimer = null;
+let otpTempToken          = null;
+let loginCooldownTimer    = null;
+let loginTurnstileWidgetId = null;  // Turnstile widget ID — null when inactive
 let deferredInstallPrompt = null;
 
 // Reaction picker state
@@ -144,7 +145,9 @@ function startLoginCooldown(seconds, errorEl) {
     if (remaining <= 0) {
       clearInterval(loginCooldownTimer);
       loginCooldownTimer = null;
-      if (btn) btn.disabled = false;
+      // Re-enable only when no Turnstile is active; if it is, the widget
+      // callback will re-enable the button once the user solves the challenge.
+      if (btn) btn.disabled = (loginTurnstileWidgetId != null);
       errorEl.textContent = 'You may try again now.';
       errorEl.style.color = '#4caf50';
     } else {
@@ -153,30 +156,46 @@ function startLoginCooldown(seconds, errorEl) {
   }, 1000);
 }
 
-// Load Cloudflare Turnstile widget after config is available
+// Load Cloudflare Turnstile widget after config is available.
+// Injects the Turnstile script once, then polls until window.turnstile is
+// ready (handles the async/defer load and cached-script edge cases).
+// Follows the pattern used in jamesjhs/Tasker (renderTurnstileWidget).
 function loadTurnstile(siteKey) {
   if (!siteKey) return;
-  const script = document.createElement('script');
-  script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
-  script.async = true;
-  script.defer = true;
-  script.onload = () => {
+  // Inject the script only once
+  if (!document.querySelector('script[src*="challenges.cloudflare.com/turnstile"]')) {
+    const script = document.createElement('script');
+    script.src   = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+    script.async = true;
+    script.defer = true;
+    document.head.appendChild(script);
+  }
+  // Disable the Sign In button until the widget is solved
+  const btn = document.getElementById('login-btn');
+  if (btn) btn.disabled = true;
+  let attempts = 0;
+  const tryRender = () => {
+    const container = document.getElementById('turnstile-container');
+    if (!container) return;
     if (window.turnstile) {
-      window.turnstile.render('#turnstile-container', {
-        sitekey: siteKey,
-        theme: 'dark',
-        callback: () => { /* token ready */ },
+      loginTurnstileWidgetId = window.turnstile.render(container, {
+        sitekey:            siteKey,
+        theme:              'dark',
+        callback:           () => { if (btn) btn.disabled = false; },
+        'expired-callback': () => { if (btn) btn.disabled = true;  },
+        'error-callback':   () => { if (btn) btn.disabled = true;  },
       });
+    } else if (attempts < 30) {
+      attempts++;
+      setTimeout(tryRender, 100);
     }
   };
-  document.head.appendChild(script);
+  tryRender();
 }
 
 function getTurnstileToken() {
-  if (!window.turnstile) return null;
-  const container = document.querySelector('#turnstile-container iframe');
-  if (!container) return null;
-  return window.turnstile.getResponse();
+  if (!window.turnstile || loginTurnstileWidgetId == null) return null;
+  return window.turnstile.getResponse(loginTurnstileWidgetId) || null;
 }
 
 async function attemptLogin() {
@@ -207,7 +226,7 @@ async function attemptLogin() {
         errorEl.textContent = data.error || 'Invalid credentials.';
         errorEl.style.color = '';
       }
-      if (window.turnstile) window.turnstile.reset();
+      if (window.turnstile && loginTurnstileWidgetId != null) window.turnstile.reset(loginTurnstileWidgetId);
       return;
     }
 
