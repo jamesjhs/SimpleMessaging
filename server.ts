@@ -27,6 +27,20 @@ const swContent = fs
 
 const app = express();
 
+function parseTrustProxySetting(value: string | undefined): boolean | number | string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (trimmed === 'true') return true;
+  if (trimmed === 'false') return false;
+  if (/^\d+$/.test(trimmed)) return parseInt(trimmed, 10);
+  return trimmed;
+}
+
+const trustProxy = parseTrustProxySetting(process.env.TRUST_PROXY);
+if (trustProxy !== undefined) {
+  app.set('trust proxy', trustProxy);
+}
+
 // ── Security / CORS headers ────────────────────────────────────────────────────
 // COOP + COEP are required for SharedArrayBuffer (FFmpeg WASM video compression)
 app.use((_req: Request, res: Response, next: NextFunction): void => {

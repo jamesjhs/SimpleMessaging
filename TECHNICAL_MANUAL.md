@@ -524,7 +524,7 @@ The SQLite file is encrypted with SQLCipher (AES-256-CBC). The encryption key is
 ### Session Security
 
 - Session tokens are 256-bit cryptographically random values (32 bytes from `crypto.randomBytes`).
-- Cookies are `HttpOnly` (not accessible to JavaScript), `SameSite=Strict` (CSRF protection), and should be served over HTTPS (`Secure` flag).
+- Cookies are `HttpOnly` (not accessible to JavaScript), `SameSite=Strict` (CSRF protection), and gain the `Secure` flag automatically whenever the request is HTTPS.
 - Sessions expire after 7 days and are cleaned up hourly.
 
 ### Password Security
@@ -616,7 +616,7 @@ npm run build    # tsc → dist/
 node dist/server.js
 ```
 
-A `process.env.NODE_ENV=production` environment is recommended so that session cookies gain the `Secure` flag automatically.
+Serve TLS over HTTPS directly or via a trusted reverse proxy so session cookies can be marked `Secure`.
 
 ### Reverse Proxy (nginx example)
 
@@ -638,7 +638,7 @@ server {
 }
 ```
 
-When behind a proxy, add `app.set('trust proxy', 1)` to `server.ts` so that `req.ip` reflects the real client address and rate limiting works correctly.
+When behind a proxy, set `TRUST_PROXY=1` (or another valid Express trust-proxy value) so that `req.ip` reflects the real client address, rate limiting works correctly, Turnstile receives the correct client IP, and HTTPS requests terminated at the proxy still receive `Secure` session cookies.
 
 ### Health Check
 
