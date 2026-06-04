@@ -56,15 +56,16 @@ const ALLOWED_MIMES = new Set([
   'image/jpeg', 'image/png', 'image/gif', 'image/webp',
   'video/mp4',  'video/webm', 'video/x-matroska', 'video/quicktime',
 ]);
+const ALLOWED_MEDIA_LABEL = 'JPEG, PNG, GIF, WebP, MP4, WebM, MKV, or MOV';
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits:  { fileSize: 50 * 1024 * 1024 },
+  limits:  { fileSize: 100 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const baseMime = file.mimetype.split(';')[0];
     if (ALLOWED_MIMES.has(baseMime)) return cb(null, true);
     console.warn('[upload] rejected mime type:', file.mimetype);
-    cb(new MulterError('LIMIT_UNEXPECTED_FILE', 'Invalid file type'));
+    cb(new Error(`Unsupported media type. Please upload ${ALLOWED_MEDIA_LABEL}.`));
   },
 });
 
@@ -603,10 +604,14 @@ router.delete('/push/unsubscribe', requireAuth, (req: Request, res: Response): v
 router.use((err: unknown, _req: Request, res: Response, _next: () => void): void => {
   if (err instanceof MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      res.status(413).json({ error: 'File too large (max 50 MB)' });
+      res.status(413).json({ error: 'File too large (max 100 MB)' });
       return;
     }
     res.status(400).json({ error: err.message });
+    return;
+  }
+  if (err instanceof Error && err.message.startsWith('Unsupported media type')) {
+    res.status(415).json({ error: err.message });
     return;
   }
   console.error('[messages] unhandled error:', err);

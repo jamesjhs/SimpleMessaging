@@ -412,7 +412,7 @@ The `🎥` button opens a full-screen recorder using `MediaRecorder` (WebRTC). M
 Images: `image/jpeg`, `image/png`, `image/gif`, `image/webp`  
 Videos: `video/mp4`, `video/webm`, `video/x-matroska`, `video/quicktime`
 
-Maximum file size: **50 MB** (enforced by multer).
+Maximum file size: **100 MB** (enforced by multer).
 
 ### Image Processing (sharp)
 

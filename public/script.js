@@ -763,11 +763,11 @@ document.getElementById('postForm').addEventListener('submit', async e => {
     activePendingId = pendingId;
     try {
       const compressed = await compressVideo(fileToSend);
-      fileToSend = new File([compressed], 'video.mp4', { type: 'video/mp4' });
+      fileToSend = compressed;
     } catch (err) {
       console.error('[compress]', err);
       activePendingId = null;
-      setPendingFailed(pendingId);
+      setPendingFailed(pendingId, 'Video conversion failed');
       return;
     }
     activePendingId = null;
@@ -846,14 +846,15 @@ function setPendingLabel(pendingId, label) {
   if (el) el.textContent = label;
 }
 
-function setPendingFailed(pendingId) {
+function setPendingFailed(pendingId, message = 'Failed to send') {
   const entry = pendingMessages.get(pendingId);
   if (!entry) return;
   const pw = entry.bubbleEl.querySelector('.pending-progress-wrap');
   if (pw) pw.style.display = 'none';
   const sr = entry.bubbleEl.querySelector('.pending-status-row');
+  const safeMessage = escapeHtml(message);
   if (sr) sr.innerHTML = `
-    <span class="pending-status-text pending-failed-text">Failed to send</span>
+    <span class="pending-status-text pending-failed-text">${safeMessage}</span>
     <button type="button" class="pending-retry-btn" data-pending-id="${pendingId}" title="Retry">↺ Retry</button>
     <button type="button" class="pending-remove-btn" data-pending-id="${pendingId}" title="Remove">✕</button>
   `;
@@ -897,7 +898,12 @@ function startPendingUpload(pendingId) {
       await loadMessages();
       scrollToBottom(true);
     } else {
-      setPendingFailed(pendingId);
+      let message = 'Failed to send';
+      try {
+        const data = JSON.parse(xhr.responseText || '{}');
+        if (data.error) message = data.error;
+      } catch {}
+      setPendingFailed(pendingId, message);
     }
   };
   xhr.onerror  = () => setPendingFailed(pendingId);
@@ -1628,15 +1634,17 @@ async function loadFFmpeg() {
     throw new Error('FFmpeg libraries not available');
   }
   const { FFmpeg } = FFmpegWASM;
+  const { toBlobURL } = FFmpegUtil;
   ffmpegInst = new FFmpeg();
   ffmpegInst.on('log', ({ message }) => console.debug('[ffmpeg]', message));
   ffmpegInst.on('progress', ({ progress }) => {
     const pct = Math.round(progress * 100);
     if (activePendingId) setPendingProgress(activePendingId, pct, '#ffc107');
   });
+  const coreBaseUrl = 'https://unpkg.com/@ffmpeg/core@0.12.9/dist/umd';
   await ffmpegInst.load({
-    coreURL: 'https://unpkg.com/@ffmpeg/core@0.12.9/dist/umd/ffmpeg-core.js',
-    wasmURL: 'https://unpkg.com/@ffmpeg/core@0.12.9/dist/umd/ffmpeg-core.wasm',
+    coreURL: await toBlobURL(`${coreBaseUrl}/ffmpeg-core.js`, 'text/javascript'),
+    wasmURL: await toBlobURL(`${coreBaseUrl}/ffmpeg-core.wasm`, 'application/wasm'),
   });
 }
 
@@ -1645,13 +1653,14 @@ async function compressVideo(file) {
     await loadFFmpeg();
   } catch {
     // FFmpeg unavailable – return file as-is
+    console.warn('[ffmpeg] unavailable; uploading original video');
     return file;
   }
   const { fetchFile } = FFmpegUtil;
-  await ffmpegInst.writeFile('input.mp4', await fetchFile(file));
-  await ffmpegInst.exec(['-i','input.mp4','-vf','scale=-2:720','-c:v','libx264','-crf','28','-preset','ultrafast','output.mp4']);
+  await ffmpegInst.writeFile('input', await fetchFile(file));
+  await ffmpegInst.exec(['-i','input','-vf','scale=-2:720','-c:v','libx264','-crf','28','-preset','ultrafast','output.mp4']);
   const data = await ffmpegInst.readFile('output.mp4');
-  return new Blob([data.buffer], { type: 'video/mp4' });
+  return new File([data.buffer], 'video.mp4', { type: 'video/mp4' });
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
