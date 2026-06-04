@@ -24,6 +24,7 @@ let activePendingId   = null;
 let otpTempToken          = null;
 let loginCooldownTimer    = null;
 let loginTurnstileWidgetId = null;  // Turnstile widget ID — null when inactive
+let loginTurnstileTokenIssuedAt = 0;
 let deferredInstallPrompt = null;
 
 // Reaction picker state
@@ -117,7 +118,11 @@ function showLoginOverlay() {
     loginCooldownTimer = null;
   }
   const btn = document.getElementById('login-btn');
-  if (btn) btn.disabled = false;
+  if (appConfig.turnstileSiteKey) {
+    resetTurnstileChallenge();
+  } else if (btn) {
+    btn.disabled = false;
+  }
 }
 
 function hideLoginOverlay() {
@@ -162,6 +167,15 @@ function startLoginCooldown(seconds, errorEl) {
 // Follows the pattern used in jamesjhs/Tasker (renderTurnstileWidget).
 function loadTurnstile(siteKey) {
   if (!siteKey) return;
+  const container = document.getElementById('turnstile-container');
+  const btn = document.getElementById('login-btn');
+
+  if (loginTurnstileWidgetId != null && window.turnstile) {
+    try { window.turnstile.reset(loginTurnstileWidgetId); } catch { /* ignore stale widget */ }
+    if (btn) btn.disabled = !getTurnstileToken();
+    return;
+  }
+
   // Inject the script only once
   if (!document.querySelector('script[src*="challenges.cloudflare.com/turnstile"]')) {
     const script = document.createElement('script');
@@ -171,19 +185,28 @@ function loadTurnstile(siteKey) {
     document.head.appendChild(script);
   }
   // Disable the Sign In button until the widget is solved
-  const btn = document.getElementById('login-btn');
   if (btn) btn.disabled = true;
   let attempts = 0;
   const tryRender = () => {
-    const container = document.getElementById('turnstile-container');
     if (!container) return;
     if (window.turnstile) {
+      container.innerHTML = '';
+      loginTurnstileTokenIssuedAt = 0;
       loginTurnstileWidgetId = window.turnstile.render(container, {
         sitekey:            siteKey,
         theme:              'dark',
-        callback:           () => { if (btn) btn.disabled = false; },
-        'expired-callback': () => { if (btn) btn.disabled = true;  },
-        'error-callback':   () => { if (btn) btn.disabled = true;  },
+        callback:           () => {
+          loginTurnstileTokenIssuedAt = Date.now();
+          if (btn) btn.disabled = false;
+        },
+        'expired-callback': () => {
+          loginTurnstileTokenIssuedAt = 0;
+          if (btn) btn.disabled = true;
+        },
+        'error-callback':   () => {
+          loginTurnstileTokenIssuedAt = 0;
+          if (btn) btn.disabled = true;
+        },
       });
     } else if (attempts < 30) {
       attempts++;
@@ -198,10 +221,34 @@ function getTurnstileToken() {
   return window.turnstile.getResponse(loginTurnstileWidgetId) || null;
 }
 
+function resetTurnstileChallenge() {
+  const btn = document.getElementById('login-btn');
+  loginTurnstileTokenIssuedAt = 0;
+  if (btn) btn.disabled = true;
+
+  if (!appConfig.turnstileSiteKey) {
+    if (btn) btn.disabled = false;
+    return;
+  }
+
+  if (window.turnstile && loginTurnstileWidgetId != null) {
+    try {
+      window.turnstile.reset(loginTurnstileWidgetId);
+    } catch {
+      loginTurnstileWidgetId = null;
+      loadTurnstile(appConfig.turnstileSiteKey);
+    }
+    return;
+  }
+
+  loadTurnstile(appConfig.turnstileSiteKey);
+}
+
 async function attemptLogin() {
   const username = document.getElementById('login-username').value.trim();
   const password = document.getElementById('login-password').value;
   const errorEl  = document.getElementById('login-error');
+  const btn      = document.getElementById('login-btn');
 
   if (!username || !password) {
     errorEl.textContent = 'Please enter your username and password.';
@@ -209,8 +256,19 @@ async function attemptLogin() {
   }
 
   const turnstileToken = getTurnstileToken();
+  if (appConfig.turnstileSiteKey && !turnstileToken) {
+    errorEl.textContent = 'Please complete the captcha before signing in.';
+    resetTurnstileChallenge();
+    return;
+  }
+  if (appConfig.turnstileSiteKey && Date.now() - loginTurnstileTokenIssuedAt > 240_000) {
+    errorEl.textContent = 'Captcha expired. Please complete it again.';
+    resetTurnstileChallenge();
+    return;
+  }
 
   try {
+    if (btn) btn.disabled = true;
     const res  = await fetch('/api/auth/login', {
       method:  'POST',
       credentials: 'same-origin',
@@ -226,12 +284,13 @@ async function attemptLogin() {
         errorEl.textContent = data.error || 'Invalid credentials.';
         errorEl.style.color = '';
       }
-      if (window.turnstile && loginTurnstileWidgetId != null) window.turnstile.reset(loginTurnstileWidgetId);
+      resetTurnstileChallenge();
       return;
     }
 
     if (data.status === '2fa_required') {
       otpTempToken = data.tempToken;
+      resetTurnstileChallenge();
       showLoginStep('otp');
       document.getElementById('login-otp').focus();
       return;
@@ -240,6 +299,7 @@ async function attemptLogin() {
     if (data.status === 'change_password') {
       currentUser = data.user.displayName;
       currentRole = data.user.role;
+      resetTurnstileChallenge();
       showLoginStep('change-password');
       document.getElementById('new-password').focus();
       return;
@@ -248,12 +308,14 @@ async function attemptLogin() {
     // Success
     currentUser = data.user.displayName;
     currentRole = data.user.role;
+    resetTurnstileChallenge();
     if (currentRole === 'admin') { window.location.href = '/admin.html'; return; }
     hideLoginOverlay();
     init();
 
   } catch {
     document.getElementById('login-error').textContent = 'Connection error. Please try again.';
+    resetTurnstileChallenge();
   }
 }
 
@@ -328,7 +390,7 @@ async function logout() {
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
   document.querySelectorAll('#posts .post').forEach(el => el.remove());
   document.getElementById('settings-panel').style.display = 'none';
-  apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+  await apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
   showLoginOverlay();
 }
 
@@ -1682,9 +1744,16 @@ function linkify(text) {
 
 // ── PWA registration ──────────────────────────────────────────────────────────
 
+let serviceWorkerRegistrationStarted = false;
+
 function registerServiceWorker() {
   if (!('serviceWorker' in navigator) || !appConfig.pwaEnabled) return;
+  if (serviceWorkerRegistrationStarted) return;
+  serviceWorkerRegistrationStarted = true;
+
   navigator.serviceWorker.register('/sw.js').then(reg => {
+    reg.update().catch(() => {});
+
     // Poll for updates every 60 s so long-lived sessions pick up new deploys
     setInterval(() => reg.update().catch(() => {}), 60_000);
 
@@ -1699,7 +1768,19 @@ function registerServiceWorker() {
         }
       });
     });
-  }).catch(e => console.warn('[sw]', e.message));
+  }).catch(e => {
+    serviceWorkerRegistrationStarted = false;
+    console.warn('[sw]', e.message);
+  });
+}
+
+let serviceWorkerReloading = false;
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (serviceWorkerReloading) return;
+    serviceWorkerReloading = true;
+    window.location.reload();
+  });
 }
 
 // ── Push notifications ────────────────────────────────────────────────────────
@@ -1971,6 +2052,7 @@ async function init() {
     const cfgRes = await fetch('/api/config', { credentials: 'same-origin' });
     if (cfgRes.ok) {
       appConfig = await cfgRes.json();
+      registerServiceWorker();
       if (appConfig.turnstileSiteKey) loadTurnstile(appConfig.turnstileSiteKey);
       // Apply custom icon immediately so the login screen shows the right logo
       if (appConfig.chatIconUrl) {

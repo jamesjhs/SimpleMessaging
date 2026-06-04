@@ -23,6 +23,10 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
+  if (event.request.cache === 'only-if-cached' && event.request.mode !== 'same-origin') {
+    return;
+  }
+
   // Never cache API calls, uploads, or admin routes
   if (url.pathname.startsWith('/api/') ||
       url.pathname.startsWith('/uploads/') ||
@@ -31,7 +35,7 @@ self.addEventListener('fetch', event => {
   }
 
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: 'no-store' })
       .then(response => {
         if (response.ok && event.request.method === 'GET') {
           const clone = response.clone();

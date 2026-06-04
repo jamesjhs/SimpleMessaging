@@ -206,6 +206,10 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
 export async function verifyTurnstile(token: string | undefined, ip: string): Promise<boolean> {
   const secret = process.env.TURNSTILE_SECRET_KEY;
   if (!secret) return true; // Turnstile disabled in development
+  if (!token) {
+    console.warn('[turnstile] missing response token');
+    return false;
+  }
 
   try {
     const resp = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
@@ -213,7 +217,17 @@ export async function verifyTurnstile(token: string | undefined, ip: string): Pr
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ secret, response: token, remoteip: ip }),
     });
-    const data = await resp.json() as { success: boolean };
+    const data = await resp.json() as {
+      success: boolean;
+      hostname?: string;
+      'error-codes'?: string[];
+    };
+    if (data.success !== true) {
+      console.warn('[turnstile] verification failed:', {
+        errors: data['error-codes'] ?? [],
+        hostname: data.hostname ?? null,
+      });
+    }
     return data.success === true;
   } catch (err) {
     console.error('[turnstile] verification error:', (err as Error).message);
