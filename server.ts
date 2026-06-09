@@ -78,6 +78,9 @@ app.use(express.static(path.join(__dirname, 'public'), {
     if (filePath.endsWith('index.html')) {
       res.setHeader('Cache-Control', 'no-cache');
     }
+    if (filePath.endsWith('.wasm')) {
+      res.setHeader('Content-Type', 'application/wasm');
+    }
   },
 }));
 

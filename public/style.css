@@ -156,11 +156,11 @@ video.chat-img { background: #000; width: 200px; height: 200px; }
 .post.pending-msg { opacity: 0.85; }
 .pending-progress-wrap { height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden; margin-top: 4px; }
 .pending-progress-bar  { height: 100%; width: 0%; background: #007bff; transition: width 0.1s; }
-.pending-status-row    { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 0.75rem; color: #aaa; }
-.pending-status-text   { flex: 1; }
+.pending-status-row    { display: flex; align-items: flex-start; gap: 6px; margin-top: 4px; font-size: 0.75rem; color: #aaa; }
+.pending-status-text   { flex: 1; min-width: 0; line-height: 1.35; white-space: pre-line; overflow-wrap: anywhere; }
 .pending-failed-text   { color: #ff5252; }
 .pending-cancel-btn, .pending-retry-btn, .pending-remove-btn {
-  background: none; border: none; cursor: pointer; color: #aaa; font-size: 0.9rem; padding: 0 2px;
+  background: none; border: none; cursor: pointer; color: #aaa; font-size: 0.9rem; padding: 0 2px; flex-shrink: 0;
 }
 .pending-retry-btn  { color: #4fc3f7; }
 .pending-remove-btn { color: #ff5252; }
@@ -369,6 +369,14 @@ textarea#text {
   color: #ff7070; text-align: left; padding: 6px 0; cursor: pointer; font-size: 0.9rem; margin-top: 4px;
 }
 #logout-btn:hover { color: #ff5252; }
+#settings-version {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #555;
+  color: #777;
+  font-size: 0.7rem;
+  text-align: center;
+}
 
 /* ── Upload warning overlay ──────────────────────────────────────────────── */
 #upload-warning-overlay {

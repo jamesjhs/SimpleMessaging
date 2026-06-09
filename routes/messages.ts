@@ -14,6 +14,7 @@ import { getDb, getSetting }            from '../db';
 import { requireAuth }                  from '../lib/auth';
 import { rateLimiter }                  from '../lib/rateLimiter';
 import type { DbMessage, ApiPost, DbUserPreferences } from '../types';
+import { version as APP_VERSION }       from '../package.json';
 
 const router      = Router();
 const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
@@ -153,6 +154,7 @@ router.get('/config', (_req: Request, res: Response): void => {
     vapidPublicKey:             VAPID_PUBLIC_KEY || null,
     turnstileSiteKey:           process.env.TURNSTILE_SITE_KEY      ?? null,
     chatIconUrl:                getSetting('chat_icon_url')         ?? null,
+    appVersion:                 APP_VERSION,
   });
 });
 
@@ -219,7 +221,7 @@ router.post(
     }
 
     const { text, viewOnce, isBlurred, replyUser, replyText, replyId, submittedAt } =
-      req.body as Record<string, string | undefined>;
+      (req.body ?? {}) as Record<string, string | undefined>;
 
     const hasText  = !!text && text.trim() !== '';
     const hasMedia = !!req.file;

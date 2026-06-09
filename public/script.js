@@ -65,9 +65,54 @@ const previewVideoText= document.getElementById('preview-video-text');
 const previewContainer= document.getElementById('preview-container');
 const postsContainer  = document.getElementById('posts');
 
+const VIDEO_UPLOAD_TARGET = {
+  width: 600,
+  height: 800,
+  fps: 24,
+  videoBitrate: '1000k',
+  audioBitrate: '128k',
+};
+const VIDEO_FILE_EXT_RE = /\.(mp4|m4v|mov|webm|mkv|avi|3gp|3gpp)$/i;
+const FFMPEG_VENDOR_BASE_URL = '/vendor/ffmpeg';
+
 // ── API helper ───────────────────────────────────────────────────────────────
 function apiFetch(url, options = {}) {
   return fetch(url, { credentials: 'same-origin', ...options });
+}
+
+async function fetchFileBytes(source) {
+  if (source instanceof Uint8Array) return source;
+  if (source instanceof File || source instanceof Blob) {
+    return new Uint8Array(await source.arrayBuffer());
+  }
+  const res = await fetch(source, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Could not fetch ${source}: HTTP ${res.status}`);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+async function toLocalBlobURL(url, mimeType) {
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Could not load ${url}: HTTP ${res.status}`);
+  const blob = new Blob([await res.arrayBuffer()], { type: mimeType });
+  return URL.createObjectURL(blob);
+}
+
+function loadScript(url) {
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${url}"]`);
+    if (existing?.dataset.loaded === 'true') { resolve(); return; }
+    if (existing) existing.remove();
+
+    const script = document.createElement('script');
+    script.src = url;
+    script.async = false;
+    script.onload = () => {
+      script.dataset.loaded = 'true';
+      resolve();
+    };
+    script.onerror = () => reject(new Error(`Could not load script ${url}`));
+    document.head.appendChild(script);
+  });
 }
 
 function isStandalonePwa() {
@@ -415,6 +460,8 @@ async function loadConfig() {
     }
     const headerTitle = document.getElementById('header-title');
     if (headerTitle && appConfig.mainHeader) headerTitle.textContent = appConfig.mainHeader;
+    const settingsVersion = document.getElementById('settings-version');
+    if (settingsVersion && appConfig.appVersion) settingsVersion.textContent = `Version ${appConfig.appVersion}`;
     if (appConfig.enableEmergencyExit) activateEmergencyExit();
 
     if (appConfig.turnstileSiteKey) loadTurnstile(appConfig.turnstileSiteKey);
@@ -792,6 +839,12 @@ function highlightMessage(target) {
 
 // ── Form submission ────────────────────────────────────────────────────────────
 
+function isVideoFile(file) {
+  if (!file) return false;
+  const mime = (file.type || '').split(';')[0].toLowerCase();
+  return mime.startsWith('video/') || VIDEO_FILE_EXT_RE.test(file.name || '');
+}
+
 document.getElementById('postForm').addEventListener('submit', async e => {
   e.preventDefault();
 
@@ -818,9 +871,9 @@ document.getElementById('postForm').addEventListener('submit', async e => {
   textInput.focus();
 
   // Optional video compression
-  const needsCompression = fileToSend && fileToSend.type.startsWith('video/') && !fileToSend.isOptimized;
+  const needsCompression = isVideoFile(fileToSend) && !fileToSend.isOptimized;
   if (needsCompression) {
-    setPendingLabel(pendingId, 'Compressing…');
+    setPendingLabel(pendingId, 'Converting video...');
     setPendingProgress(pendingId, 0, '#ffc107');
     activePendingId = pendingId;
     try {
@@ -829,7 +882,7 @@ document.getElementById('postForm').addEventListener('submit', async e => {
     } catch (err) {
       console.error('[compress]', err);
       activePendingId = null;
-      setPendingFailed(pendingId, 'Video conversion failed');
+      setPendingFailed(pendingId, getVideoConversionFailureMessage(fileToSend, err), { retry: false });
       return;
     }
     activePendingId = null;
@@ -867,7 +920,7 @@ function createPendingBubble(pendingId, text, file, replyData) {
   }
   let mediaHtml = '';
   if (file) {
-    if (file.type.startsWith('video/')) {
+    if (isVideoFile(file)) {
       mediaHtml = `<div class="pending-video-label">[ Video ]</div>`;
     } else {
       const blobUrl = URL.createObjectURL(file);
@@ -908,16 +961,51 @@ function setPendingLabel(pendingId, label) {
   if (el) el.textContent = label;
 }
 
-function setPendingFailed(pendingId, message = 'Failed to send') {
+function getErrorMessage(err) {
+  if (err instanceof Error && err.message) return err.message;
+  if (err && typeof err === 'object' && 'message' in err) return String(err.message);
+  return String(err || 'Unknown error');
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return 'unknown size';
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unit = units.shift();
+  while (value >= 1024 && units.length) {
+    value /= 1024;
+    unit = units.shift();
+  }
+  return `${value.toFixed(value >= 10 ? 1 : 2)} ${unit}`;
+}
+
+function getVideoConversionFailureMessage(file, err) {
+  const detail = getErrorMessage(err);
+  const mime = file?.type || 'missing MIME type';
+  const name = file?.name || 'unnamed video';
+  const size = file ? formatBytes(file.size) : 'unknown size';
+  return [
+    'Video conversion failed.',
+    `Reason: ${detail}`,
+    `File: ${name} (${mime}, ${size})`,
+    'The original video was not uploaded because it must be converted first.',
+  ].join('\n');
+}
+
+function setPendingFailed(pendingId, message = 'Failed to send', options = {}) {
   const entry = pendingMessages.get(pendingId);
   if (!entry) return;
   const pw = entry.bubbleEl.querySelector('.pending-progress-wrap');
   if (pw) pw.style.display = 'none';
   const sr = entry.bubbleEl.querySelector('.pending-status-row');
   const safeMessage = escapeHtml(message);
+  const retryButton = options.retry === false
+    ? ''
+    : `<button type="button" class="pending-retry-btn" data-pending-id="${pendingId}" title="Retry">↺ Retry</button>`;
   if (sr) sr.innerHTML = `
     <span class="pending-status-text pending-failed-text">${safeMessage}</span>
-    <button type="button" class="pending-retry-btn" data-pending-id="${pendingId}" title="Retry">↺ Retry</button>
+    ${retryButton}
     <button type="button" class="pending-remove-btn" data-pending-id="${pendingId}" title="Remove">✕</button>
   `;
 }
@@ -934,6 +1022,10 @@ function removePendingBubble(pendingId) {
 function startPendingUpload(pendingId) {
   const entry = pendingMessages.get(pendingId);
   if (!entry || entry.cancelled) return;
+  if (!entry.formData) {
+    setPendingFailed(pendingId, 'Nothing to upload', { retry: false });
+    return;
+  }
 
   const pw = entry.bubbleEl.querySelector('.pending-progress-wrap');
   if (pw) pw.style.display = 'block';
@@ -960,15 +1052,15 @@ function startPendingUpload(pendingId) {
       await loadMessages();
       scrollToBottom(true);
     } else {
-      let message = 'Failed to send';
+      let message = `Upload failed (HTTP ${xhr.status || 'unknown'}).`;
       try {
         const data = JSON.parse(xhr.responseText || '{}');
-        if (data.error) message = data.error;
+        if (data.error) message = `Upload failed (HTTP ${xhr.status}).\n${data.error}`;
       } catch {}
       setPendingFailed(pendingId, message);
     }
   };
-  xhr.onerror  = () => setPendingFailed(pendingId);
+  xhr.onerror  = () => setPendingFailed(pendingId, 'Upload failed.\nNetwork error or the server closed the connection before the upload completed.');
   xhr.onabort  = () => removePendingBubble(pendingId);
   xhr.send(entry.formData);
 }
@@ -1236,7 +1328,7 @@ function handleInput() {
 function handleImageSelect(e) {
   const file = e.target.files[0];
   if (!file) return;
-  if (file.type.startsWith('video/')) {
+  if (isVideoFile(file)) {
     previewImg.style.display       = 'none';
     previewVideoText.style.display = 'block';
     previewContainer.style.display = 'block';
@@ -1692,37 +1784,70 @@ let ffmpegInst = null;
 
 async function loadFFmpeg() {
   if (ffmpegInst) return;
-  if (typeof FFmpegWASM === 'undefined' || typeof FFmpegUtil === 'undefined') {
-    throw new Error('FFmpeg libraries not available');
+  if (typeof FFmpegWASM === 'undefined') {
+    await loadScript(`${FFMPEG_VENDOR_BASE_URL}/ffmpeg.js`);
+  }
+  if (typeof FFmpegWASM === 'undefined') {
+    throw new Error('FFmpeg browser library did not load from /vendor/ffmpeg/ffmpeg.js. Check the local asset path, service-worker cache, and browser script blocking.');
+  }
+  if (window.crossOriginIsolated === false) {
+    throw new Error('Browser is not cross-origin isolated, so FFmpeg WASM cannot use SharedArrayBuffer. Check COOP/COEP headers.');
   }
   const { FFmpeg } = FFmpegWASM;
-  const { toBlobURL } = FFmpegUtil;
   ffmpegInst = new FFmpeg();
   ffmpegInst.on('log', ({ message }) => console.debug('[ffmpeg]', message));
   ffmpegInst.on('progress', ({ progress }) => {
     const pct = Math.round(progress * 100);
     if (activePendingId) setPendingProgress(activePendingId, pct, '#ffc107');
   });
-  const coreBaseUrl = 'https://unpkg.com/@ffmpeg/core@0.12.9/dist/umd';
+  const coreBaseUrl = FFMPEG_VENDOR_BASE_URL;
   await ffmpegInst.load({
-    coreURL: await toBlobURL(`${coreBaseUrl}/ffmpeg-core.js`, 'text/javascript'),
-    wasmURL: await toBlobURL(`${coreBaseUrl}/ffmpeg-core.wasm`, 'application/wasm'),
+    coreURL: await toLocalBlobURL(`${coreBaseUrl}/ffmpeg-core.js`, 'text/javascript'),
+    wasmURL: await toLocalBlobURL(`${coreBaseUrl}/ffmpeg-core.wasm`, 'application/wasm'),
   });
 }
 
 async function compressVideo(file) {
   try {
     await loadFFmpeg();
-  } catch {
-    // FFmpeg unavailable – return file as-is
-    console.warn('[ffmpeg] unavailable; uploading original video');
-    return file;
+  } catch (err) {
+    console.warn('[ffmpeg] unavailable; video conversion cannot continue', err);
+    throw err;
   }
-  const { fetchFile } = FFmpegUtil;
-  await ffmpegInst.writeFile('input', await fetchFile(file));
-  await ffmpegInst.exec(['-i','input','-vf','scale=-2:720','-c:v','libx264','-crf','28','-preset','ultrafast','output.mp4']);
-  const data = await ffmpegInst.readFile('output.mp4');
-  return new File([data.buffer], 'video.mp4', { type: 'video/mp4' });
+  const inputExt = (file.name && file.name.match(/\.[^.]+$/)?.[0]) || '.video';
+  const inputName = `input${inputExt}`;
+  const outputName = 'output.mp4';
+  const scaleFilter = [
+    `scale=${VIDEO_UPLOAD_TARGET.width}:${VIDEO_UPLOAD_TARGET.height}:force_original_aspect_ratio=decrease`,
+    `pad=${VIDEO_UPLOAD_TARGET.width}:${VIDEO_UPLOAD_TARGET.height}:(ow-iw)/2:(oh-ih)/2:black`,
+    'setsar=1',
+    `fps=${VIDEO_UPLOAD_TARGET.fps}`,
+  ].join(',');
+
+  try {
+    await ffmpegInst.writeFile(inputName, await fetchFileBytes(file));
+    await ffmpegInst.exec([
+      '-y',
+      '-i', inputName,
+      '-vf', scaleFilter,
+      '-c:v', 'libx264',
+      '-b:v', VIDEO_UPLOAD_TARGET.videoBitrate,
+      '-maxrate', VIDEO_UPLOAD_TARGET.videoBitrate,
+      '-bufsize', '2000k',
+      '-preset', 'ultrafast',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', VIDEO_UPLOAD_TARGET.audioBitrate,
+      '-ar', '44100',
+      '-movflags', '+faststart',
+      outputName,
+    ]);
+    const data = await ffmpegInst.readFile(outputName);
+    return new File([data], 'video.mp4', { type: 'video/mp4' });
+  } finally {
+    await ffmpegInst.deleteFile(inputName).catch(() => {});
+    await ffmpegInst.deleteFile(outputName).catch(() => {});
+  }
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
