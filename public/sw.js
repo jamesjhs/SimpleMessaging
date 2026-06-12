@@ -1,7 +1,7 @@
 'use strict';
 
 const CACHE_NAME  = 'tls-__APP_VERSION__'; // replaced with the real version by the server at runtime
-const SHELL_URLS  = ['/', '/style.css', '/script.js', '/icon.svg'];
+const SHELL_URLS  = ['/', '/style.css', '/script.js', '/icon.svg', '/android.png'];
 
 self.addEventListener('install', event => {
   event.waitUntil(
@@ -53,6 +53,7 @@ self.addEventListener('push', event => {
   let title = 'TLS';
   let body  = 'New message';
   let icon  = '/icon.svg';
+  const badge = '/android.png';
 
   try {
     if (event.data) {
@@ -66,7 +67,7 @@ self.addEventListener('push', event => {
     self.registration.showNotification(title, {
       body,
       icon,
-      badge: icon,
+      badge,
       tag:   'tls-message',
       renotify: true,
     })
