@@ -7,13 +7,14 @@
   --color-theirs:  #215e6d;
   --color-surface: #444;
   --chat-font-size: 15px;
+  --app-font-family: sans-serif;
 }
 
 body {
   background-color: var(--color-bg);
   touch-action: auto;
   color: #ffffff;
-  font-family: sans-serif;
+  font-family: var(--app-font-family);
   max-width: 800px;
   margin: 1.5rem auto;
   padding-bottom: 100px;
@@ -358,6 +359,17 @@ textarea#text {
 .colour-scheme-btn:hover, .colour-scheme-btn.active { background: rgba(255,255,255,0.1); border-color: #888; }
 .colour-swatch { display: flex; gap: 3px; }
 .colour-swatch span { width: 14px; height: 14px; border-radius: 50%; display: block; }
+.font-family-list { display: grid; grid-template-columns: 1fr; gap: 4px; }
+.font-family-btn {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; background: transparent; border: 1px solid #555;
+  color: #fff; border-radius: 8px; padding: 6px 10px;
+  cursor: pointer; margin-bottom: 2px; font-size: 0.85rem;
+}
+.font-family-btn:hover, .font-family-btn.active { background: rgba(255,255,255,0.1); border-color: #888; }
+.font-preview-system { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.font-preview-serif { font-family: Georgia, "Times New Roman", serif; }
+.font-preview-friendly { font-family: "Comic Sans MS", "Comic Sans", "Trebuchet MS", cursive, sans-serif; }
 .panel-divider { border: none; border-top: 1px solid #555; margin: 8px 0; }
 .panel-action-btn {
   display: block; width: 100%; background: transparent; border: none;

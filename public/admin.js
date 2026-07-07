@@ -2,6 +2,25 @@
 
 let adminSettingsMeta = { vapidConfigured: false };
 
+const COLOUR_SCHEME_CATALOG = {
+  default: { name: 'Default', bg: '#2c2c2c', mine: '#206123', theirs: '#215e6d' },
+  ocean:   { name: 'Ocean',   bg: '#1a2a3a', mine: '#1a4f6e', theirs: '#0d4d4d' },
+  purple:  { name: 'Purple',  bg: '#1e1a2e', mine: '#533483', theirs: '#0f3460' },
+  warm:    { name: 'Warm',    bg: '#2a1f0a', mine: '#7c4500', theirs: '#5c3d02' },
+  forest:  { name: 'Forest',  bg: '#0d1f0d', mine: '#1b5e20', theirs: '#003d33' },
+  midnight:{ name: 'Midnight',bg: '#101820', mine: '#2364aa', theirs: '#3d5a80' },
+  rose:    { name: 'Rose',    bg: '#26161d', mine: '#a23e48', theirs: '#6d597a' },
+  sage:    { name: 'Sage',    bg: '#18221b', mine: '#4f772d', theirs: '#31572c' },
+  steel:   { name: 'Steel',   bg: '#20252b', mine: '#3a6ea5', theirs: '#546a7b' },
+  sunset:  { name: 'Sunset',  bg: '#241b22', mine: '#c44536', theirs: '#5e548e' },
+};
+
+const FONT_OPTION_CATALOG = {
+  system:   'Default Sans',
+  serif:    'Serif',
+  friendly: 'Friendly',
+};
+
 // ── Navigation ────────────────────────────────────────────────────────────────
 
 function showSection(name) {
@@ -26,6 +45,18 @@ function apiFetch(url, options = {}) {
   return fetch(url, { credentials: 'same-origin', ...options });
 }
 
+async function loadAdminShellName() {
+  try {
+    const res = await apiFetch('/api/config');
+    if (!res.ok) return;
+    const config = await res.json();
+    const appName = (config.siteTitle || 'Messaging').trim() || 'Messaging';
+    document.title = `${appName} - Admin Panel`;
+    const brand = document.getElementById('admin-nav-brand');
+    if (brand) brand.textContent = `← ${appName}`;
+  } catch { /* keep static fallback */ }
+}
+
 function setError(id, msg) {
   const el = document.getElementById(id);
   if (el) el.textContent = msg || '';
@@ -34,6 +65,32 @@ function setError(id, msg) {
 function fmtDate(ts) {
   if (!ts) return '—';
   return new Date(ts).toLocaleString();
+}
+
+function renderAvailableColourSchemes(catalogIds, selectedValue) {
+  const container = document.getElementById('available-colour-schemes');
+  if (!container) return;
+
+  const ids = catalogIds.filter(id => COLOUR_SCHEME_CATALOG[id]);
+  const selectedIds = selectedValue ? String(selectedValue).split(',') : ids;
+  const selected = new Set(selectedIds.map(id => id.trim()).filter(Boolean));
+  container.innerHTML = '';
+
+  ids.forEach(id => {
+    const scheme = COLOUR_SCHEME_CATALOG[id];
+    const label = document.createElement('label');
+    label.className = 'colour-scheme-admin-option';
+    label.innerHTML = `
+      <input type="checkbox" value="${esc(id)}" ${selected.has(id) ? 'checked' : ''}>
+      <span>${esc(scheme.name)}</span>
+      <span class="colour-swatch">
+        <span style="background:${scheme.bg}"></span>
+        <span style="background:${scheme.mine}"></span>
+        <span style="background:${scheme.theirs}"></span>
+      </span>
+    `;
+    container.appendChild(label);
+  });
 }
 
 // ── Users ─────────────────────────────────────────────────────────────────────
@@ -275,6 +332,12 @@ async function loadSettings() {
   const s   = await res.json();
   const form = document.getElementById('settings-form');
   adminSettingsMeta.vapidConfigured = s.vapid_configured === '1';
+  const catalogIds = JSON.parse(s.colour_scheme_catalog || '[]');
+  JSON.parse(s.font_option_catalog || '[]').forEach(id => {
+    if (!FONT_OPTION_CATALOG[id]) return;
+    const option = form.elements.default_font_family?.querySelector(`option[value="${CSS.escape(id)}"]`);
+    if (option) option.textContent = FONT_OPTION_CATALOG[id];
+  });
 
   Object.entries(s).forEach(([key, val]) => {
     const el = form.elements[key];
@@ -282,6 +345,7 @@ async function loadSettings() {
     if (el.type === 'checkbox') el.checked = val === '1' || val === 'true';
     else el.value = val ?? '';
   });
+  renderAvailableColourSchemes(catalogIds, s.available_colour_schemes);
 
   // Update icon preview
   if (s.chat_icon_url) {
@@ -322,7 +386,7 @@ async function saveSettings(e) {
   const form = document.getElementById('settings-form');
   const body = {};
 
-  ['site_title','main_header','delete_button','reply_button','read_status_unread','read_status_seen'].forEach(k => {
+  ['site_title','main_header','delete_button','reply_button','read_status_unread','read_status_seen','default_font_family'].forEach(k => {
     const el = form.elements[k];
     if (el) body[k] = el.value;
   });
@@ -330,6 +394,9 @@ async function saveSettings(e) {
     const el = form.elements[k];
     if (el) body[k] = el.checked ? '1' : '0';
   });
+  const selectedSchemes = Array.from(document.querySelectorAll('#available-colour-schemes input[type="checkbox"]:checked'))
+    .map(el => el.value);
+  body.available_colour_schemes = selectedSchemes.length > 0 ? selectedSchemes.join(',') : 'default';
 
   const res = await apiFetch('/api/admin/settings', {
     method:  'PATCH',
@@ -489,4 +556,5 @@ const adminPwaToggle = document.getElementById('pwa-enabled-toggle');
 if (adminPwaToggle) adminPwaToggle.addEventListener('change', updatePushSettingsUi);
 
 // Load users on page open
+loadAdminShellName();
 loadUsers();

@@ -74,6 +74,7 @@ export interface DbUserPreferences {
   enter_to_send: 0 | 1;
   push_enabled:  0 | 1;
   font_size:     number | null;
+  font_family:   string | null;
   updated_at:    number | null;
 }
 

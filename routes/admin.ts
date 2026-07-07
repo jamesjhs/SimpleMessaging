@@ -8,17 +8,63 @@ import multer                        from 'multer';
 import crypto                        from 'crypto';
 import path                          from 'path';
 import fs                            from 'fs';
+import sharp                         from 'sharp';
 import { getDb, hashPassword, getSetting, setSetting } from '../db';
 import { requireAdmin, createOtp, sendMail }           from '../lib/auth';
 import { rateLimiter }                                 from '../lib/rateLimiter';
+import { COLOUR_SCHEME_IDS, parseAvailableColourSchemes } from '../lib/colourSchemes';
+import { getAppName, getMainHeader }                   from '../lib/appName';
+import { FONT_OPTION_IDS, normalizeFontOption }         from '../lib/fontOptions';
 import type { DbUser }                                 from '../types';
 
 const router  = Router();
 const jsonUp  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const imageUp = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+const publicDir = path.join(__dirname, '..', 'public');
+const pwaIconSizes = [72, 96, 128, 144, 152, 180, 192, 384, 512] as const;
 
 function hasVapidConfiguration(): boolean {
   return Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+}
+
+async function writePwaIcons(buffer: Buffer): Promise<string> {
+  const source = sharp(buffer, { failOn: 'error' }).rotate();
+  const metadata = await source.metadata();
+  if (!metadata.width || !metadata.height) throw new Error('Uploaded file is not a valid image');
+
+  await fs.promises.mkdir(publicDir, { recursive: true });
+
+  await Promise.all(pwaIconSizes.map(size =>
+    sharp(buffer, { failOn: 'error' })
+      .rotate()
+      .resize(size, size, { fit: 'cover', position: 'centre' })
+      .png({ compressionLevel: 9, adaptiveFiltering: true })
+      .toFile(path.join(publicDir, `pwa-icon-${size}.png`)),
+  ));
+
+  await Promise.all([192, 512].map(size => {
+    const innerSize = Math.round(size * 0.8);
+    return sharp(buffer, { failOn: 'error' })
+      .rotate()
+      .resize(innerSize, innerSize, { fit: 'cover', position: 'centre' })
+      .extend({
+        top: Math.floor((size - innerSize) / 2),
+        bottom: Math.ceil((size - innerSize) / 2),
+        left: Math.floor((size - innerSize) / 2),
+        right: Math.ceil((size - innerSize) / 2),
+        background: '#2c2c2c',
+      })
+      .png({ compressionLevel: 9, adaptiveFiltering: true })
+      .toFile(path.join(publicDir, `pwa-icon-maskable-${size}.png`));
+  }));
+
+  await sharp(buffer, { failOn: 'error' })
+    .rotate()
+    .resize(32, 32, { fit: 'cover', position: 'centre' })
+    .png({ compressionLevel: 9, adaptiveFiltering: true })
+    .toFile(path.join(publicDir, 'favicon-32.png'));
+
+  return '/pwa-icon-192.png';
 }
 
 // All routes in this file require admin role, with moderate rate limiting
@@ -176,13 +222,14 @@ router.post('/invite', async (req: Request, res: Response): Promise<void> => {
 
   const { otp: inviteCode } = createOtp(user.id, 'invite');
   const appUrl = process.env.APP_URL ?? 'http://localhost:3333';
+  const appName = getAppName();
 
   try {
     await sendMail(
       user.email,
-      'You have been invited to TLS',
-      `You have been invited to TLS secure messaging.\n\nSign in at: ${appUrl}\nUsername: ${user.username}\nTemporary code: ${inviteCode}\n\nThis code expires in 10 minutes. You will be asked to change your password on first login.`,
-      `<p>You have been invited to <strong>TLS</strong> secure messaging.</p>
+      `You have been invited to ${appName}`,
+      `You have been invited to ${appName} secure messaging.\n\nSign in at: ${appUrl}\nUsername: ${user.username}\nTemporary code: ${inviteCode}\n\nThis code expires in 10 minutes. You will be asked to change your password on first login.`,
+      `<p>You have been invited to <strong>${appName}</strong> secure messaging.</p>
        <p>Sign in at: <a href="${appUrl}">${appUrl}</a><br>
        Username: <strong>${user.username}</strong><br>
        Temporary code: <strong>${inviteCode}</strong></p>
@@ -236,6 +283,7 @@ router.patch('/reports/:id', (req: Request, res: Response): void => {
 router.get('/settings', (_req: Request, res: Response): void => {
   const keys = [
     'pwa_enabled',          'report_enabled',        'push_notifications_enabled',
+    'available_colour_schemes', 'default_font_family',
     'site_title',           'main_header',            'enable_view_once',
     'enable_blur',          'enable_emergency_exit',  'enable_delete_button',
     'delete_button',        'reply_button',           'read_status_seen',
@@ -243,7 +291,11 @@ router.get('/settings', (_req: Request, res: Response): void => {
   ];
   const out: Record<string, string | null> = {};
   for (const k of keys) out[k] = getSetting(k);
+  out.site_title = getAppName();
+  out.main_header = getMainHeader();
   out.vapid_configured = hasVapidConfiguration() ? '1' : '0';
+  out.colour_scheme_catalog = JSON.stringify(COLOUR_SCHEME_IDS);
+  out.font_option_catalog = JSON.stringify(FONT_OPTION_IDS);
   res.json(out);
 });
 
@@ -279,6 +331,16 @@ router.patch('/settings', (req: Request, res: Response): void => {
     if (k in body) setSetting(k, String(body[k]));
   }
 
+  if ('available_colour_schemes' in body) {
+    const value = Array.isArray(body.available_colour_schemes)
+      ? body.available_colour_schemes.join(',')
+      : String(body.available_colour_schemes);
+    setSetting('available_colour_schemes', parseAvailableColourSchemes(value).join(','));
+  }
+  if ('default_font_family' in body) {
+    setSetting('default_font_family', normalizeFontOption(String(body.default_font_family)));
+  }
+
   if ('pwa_enabled' in body) {
     setSetting('pwa_enabled', requestedPwaEnabled ? '1' : '0');
   }
@@ -296,29 +358,28 @@ router.patch('/settings', (req: Request, res: Response): void => {
 
 // ── POST /api/admin/icon ──────────────────────────────────────────────────────
 
-router.post('/icon', imageUp.single('icon'), (req: Request, res: Response): void => {
+router.post('/icon', imageUp.single('icon'), async (req: Request, res: Response): Promise<void> => {
   if (!req.file) { res.status(400).json({ error: 'No file uploaded' }); return; }
 
-  const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
+  const allowed = ['image/jpeg', 'image/png', 'image/webp'];
   const mime    = req.file.mimetype.split(';')[0];
   if (!allowed.includes(mime)) { res.status(400).json({ error: 'Invalid image type' }); return; }
 
-  const extMap: Record<string, string> = {
-    'image/svg+xml': 'svg', 'image/gif': 'gif',
-    'image/png': 'png',     'image/webp': 'webp',
-    'image/jpeg': 'jpg',
-  };
-  const filename = `chat-icon.${extMap[mime] ?? 'png'}`;
-  const iconPath = path.join(__dirname, '..', 'public', filename);
-
   try {
-    fs.writeFileSync(iconPath, req.file.buffer);
-    const url = `/${filename}`;
+    const url = await writePwaIcons(req.file.buffer);
     setSetting('chat_icon_url', url);
-    res.json({ url });
+    res.json({
+      url,
+      manifestIcons: [
+        '/pwa-icon-192.png',
+        '/pwa-icon-512.png',
+        '/pwa-icon-maskable-192.png',
+        '/pwa-icon-maskable-512.png',
+      ],
+    });
   } catch (err) {
-    console.error('[admin] icon save failed:', (err as Error).message);
-    res.status(500).json({ error: 'Failed to save icon' });
+    console.error('[admin] icon processing failed:', (err as Error).message);
+    res.status(400).json({ error: 'Failed to process icon image' });
   }
 });
 

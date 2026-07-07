@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TLS – Admin Panel</title>
+  <title>Messaging - Admin Panel</title>
   <link rel="stylesheet" href="admin.css" />
 </head>
 <body>
   <nav class="admin-nav">
-    <a href="/" class="nav-brand">← TLS</a>
+    <a href="/" class="nav-brand" id="admin-nav-brand">← Messaging</a>
     <div class="nav-tabs">
       <button class="nav-tab active" onclick="showSection('users')">👥 Users</button>
       <button class="nav-tab" onclick="showSection('reports')">🚨 Reports</button>
@@ -65,10 +65,10 @@
       <form id="settings-form" onsubmit="saveSettings(event)">
         <div class="settings-grid">
           <label>Site Title</label>
-          <input type="text" name="site_title" placeholder="TLS">
+          <input type="text" name="site_title" placeholder="Messaging">
 
           <label>Main Header</label>
-          <input type="text" name="main_header" placeholder="TLS">
+          <input type="text" name="main_header" placeholder="Messaging">
 
           <label>Delete Button Label</label>
           <input type="text" name="delete_button" placeholder="✗">
@@ -96,6 +96,16 @@
 
           <label>Enable Report Function</label>
           <input type="checkbox" name="report_enabled">
+
+          <label>Available Colour Schemes</label>
+          <div id="available-colour-schemes" class="colour-scheme-admin-list"></div>
+
+          <label>Default Font</label>
+          <select name="default_font_family" id="default-font-family">
+            <option value="system">Default Sans</option>
+            <option value="serif">Serif</option>
+            <option value="friendly">Friendly</option>
+          </select>
 
           <label>Enable PWA</label>
           <input type="checkbox" name="pwa_enabled" id="pwa-enabled-toggle">

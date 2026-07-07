@@ -156,6 +156,7 @@ export async function initDb(): Promise<DB> {
     `ALTER TABLE users ADD COLUMN locked_until          INTEGER`,
     `ALTER TABLE users ADD COLUMN login_locked          INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE user_preferences ADD COLUMN font_size  INTEGER`,
+    `ALTER TABLE user_preferences ADD COLUMN font_family TEXT`,
     `ALTER TABLE user_preferences ADD COLUMN push_enabled INTEGER NOT NULL DEFAULT 0`,
   ]) {
     try { db.exec(sql); } catch { /* column already exists – safe to ignore */ }
@@ -191,8 +192,10 @@ export async function initDb(): Promise<DB> {
     pwa_enabled:                '0',
     report_enabled:             '0',
     push_notifications_enabled: '0',
-    site_title:             'TLS',
-    main_header:            'TLS',
+    available_colour_schemes:   'default,ocean,purple,warm,forest,midnight,rose,sage,steel,sunset',
+    default_font_family:        'system',
+    site_title:             'Messaging',
+    main_header:            'Messaging',
     enable_view_once:       '1',
     enable_blur:            '1',
     enable_emergency_exit:  '1',
@@ -204,6 +207,11 @@ export async function initDb(): Promise<DB> {
   };
   const insertSetting = db.prepare('INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)');
   for (const [k, v] of Object.entries(defaults)) insertSetting.run(k, v);
+  const migratedDefaultName = db.prepare("SELECT value FROM app_settings WHERE key = 'default_app_name_migrated'").get();
+  if (!migratedDefaultName) {
+    db.prepare("UPDATE app_settings SET value = 'Messaging' WHERE key IN ('site_title', 'main_header') AND value = 'TLS'").run();
+    insertSetting.run('default_app_name_migrated', '1');
+  }
 
   // ── Seed admin from .env ──────────────────────────────────────────────────
   const adminUser = process.env.ADMIN_USERNAME;

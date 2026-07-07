@@ -197,7 +197,8 @@ tr:hover td { background: rgba(255,255,255,0.02); }
   align-items: center;
   max-width: 600px;
 }
-.settings-grid input[type="text"] {
+.settings-grid input[type="text"],
+.settings-grid select {
   background: #2a2a3e;
   border: 1px solid #555;
   border-radius: 6px;
@@ -206,8 +207,29 @@ tr:hover td { background: rgba(255,255,255,0.02); }
   font-size: 0.85rem;
   outline: none;
 }
-.settings-grid input[type="text"]:focus { border-color: #007bff; }
+.settings-grid input[type="text"]:focus,
+.settings-grid select:focus { border-color: #007bff; }
 .settings-grid input[type="checkbox"]   { width: 16px; height: 16px; cursor: pointer; }
+.colour-scheme-admin-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+.colour-scheme-admin-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid #555;
+  border-radius: 8px;
+  background: #2a2a3e;
+  color: var(--admin-text);
+  font-size: 0.88rem;
+}
+.colour-scheme-admin-option input { flex-shrink: 0; }
+.colour-scheme-admin-option .colour-swatch { display: flex; gap: 3px; margin-left: auto; }
+.colour-scheme-admin-option .colour-swatch span { width: 14px; height: 14px; border-radius: 50%; display: block; }
 
 /* ── Messages ──────────────────────────────────────────────────────────────── */
 .error-msg   { color: #ff7070; font-size: 0.85rem; min-height: 20px; margin-bottom: 10px; }

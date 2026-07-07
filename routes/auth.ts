@@ -15,6 +15,7 @@ import {
   sendMail,
   verifyTurnstile,
 } from '../lib/auth';
+import { getAppName } from '../lib/appName';
 import { rateLimiter } from '../lib/rateLimiter';
 import type { DbUser } from '../types';
 
@@ -111,7 +112,7 @@ router.post(
     try {
       await sendMail(
         user.email,
-        'Your TLS login code',
+        `Your ${getAppName()} login code`,
         `Your one-time login code is: ${otp}\n\nThis code expires in 10 minutes.`,
         `<p>Your one-time login code is: <strong>${otp}</strong></p>
          <p>This code expires in 10&nbsp;minutes.</p>`,

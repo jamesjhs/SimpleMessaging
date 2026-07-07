@@ -1,7 +1,8 @@
 'use strict';
 
 const CACHE_NAME  = 'tls-__APP_VERSION__'; // replaced with the real version by the server at runtime
-const SHELL_URLS  = ['/', '/style.css', '/script.js', '/icon.svg', '/android.png'];
+const APP_NAME    = __APP_NAME__; // replaced with the configured app name by the server at runtime
+const SHELL_URLS  = ['/', '/style.css', '/script.js', '/icon.svg', '/favicon-32.png', '/pwa-icon-180.png', '/pwa-icon-192.png', '/pwa-icon-512.png', '/android.png'];
 
 self.addEventListener('install', event => {
   event.waitUntil(
@@ -50,9 +51,9 @@ self.addEventListener('fetch', event => {
 // ── Push notifications ────────────────────────────────────────────────────────
 
 self.addEventListener('push', event => {
-  let title = 'TLS';
+  let title = APP_NAME;
   let body  = 'New message';
-  let icon  = '/icon.svg';
+  let icon  = '/pwa-icon-192.png';
   const badge = '/android.png';
 
   try {

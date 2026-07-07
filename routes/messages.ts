@@ -13,6 +13,9 @@ import crypto                           from 'crypto';
 import { getDb, getSetting }            from '../db';
 import { requireAuth }                  from '../lib/auth';
 import { rateLimiter }                  from '../lib/rateLimiter';
+import { isColourSchemeAvailable, parseAvailableColourSchemes } from '../lib/colourSchemes';
+import { getAppName, getMainHeader }    from '../lib/appName';
+import { FONT_OPTION_IDS, normalizeFontOption } from '../lib/fontOptions';
 import type { DbMessage, ApiPost, DbUserPreferences } from '../types';
 import { version as APP_VERSION }       from '../package.json';
 
@@ -138,8 +141,8 @@ router.get('/me', requireAuth, (req: Request, res: Response): void => {
 
 router.get('/config', (_req: Request, res: Response): void => {
   res.json({
-    siteTitle:                  getSetting('site_title')            ?? 'TLS',
-    mainHeader:                 getSetting('main_header')           ?? 'TLS',
+    siteTitle:                  getAppName(),
+    mainHeader:                 getMainHeader(),
     readStatusSeen:             getSetting('read_status_seen')      ?? '✓✓',
     readStatusUnread:           getSetting('read_status_unread')    ?? '✓',
     deleteButton:               getSetting('delete_button')         ?? '✗',
@@ -154,6 +157,9 @@ router.get('/config', (_req: Request, res: Response): void => {
     vapidPublicKey:             VAPID_PUBLIC_KEY || null,
     turnstileSiteKey:           process.env.TURNSTILE_SITE_KEY      ?? null,
     chatIconUrl:                getSetting('chat_icon_url')         ?? null,
+    availableColourSchemes:     parseAvailableColourSchemes(getSetting('available_colour_schemes')),
+    fontOptions:                FONT_OPTION_IDS,
+    defaultFontFamily:          normalizeFontOption(getSetting('default_font_family')),
     appVersion:                 APP_VERSION,
   });
 });
@@ -426,22 +432,27 @@ router.get('/preferences', requireAuth, (req: Request, res: Response): void => {
   const row = db.prepare('SELECT * FROM user_preferences WHERE user_id = ?')
     .get(req.user!.id) as DbUserPreferences | undefined;
 
+  const availableSchemes = parseAvailableColourSchemes(getSetting('available_colour_schemes'));
+  const savedScheme = row?.colour_scheme ?? 'default';
+
   res.json({
-    scheme:      row?.colour_scheme ?? 'default',
+    scheme:      availableSchemes.includes(savedScheme) ? savedScheme : availableSchemes[0],
     enterToSend: row?.enter_to_send === 1,
     pushEnabled: row?.push_enabled === 1,
     fontSize:    row?.font_size ?? 15,
+    fontFamily:  row?.font_family ? normalizeFontOption(row.font_family) : normalizeFontOption(getSetting('default_font_family')),
   });
 });
 
 // ── POST /api/preferences ─────────────────────────────────────────────────────
 
 router.post('/preferences', requireAuth, (req: Request, res: Response): void => {
-  const { scheme, enterToSend, pushEnabled, fontSize } = req.body as {
+  const { scheme, enterToSend, pushEnabled, fontSize, fontFamily } = req.body as {
     scheme?:      string;
     enterToSend?: boolean;
     pushEnabled?: boolean;
     fontSize?:    number;
+    fontFamily?:  string;
   };
 
   if (fontSize !== undefined) {
@@ -450,6 +461,14 @@ router.post('/preferences', requireAuth, (req: Request, res: Response): void => 
       res.status(400).json({ error: 'fontSize must be an integer between 11 and 24' });
       return;
     }
+  }
+  if (scheme !== undefined && !isColourSchemeAvailable(String(scheme), getSetting('available_colour_schemes'))) {
+    res.status(400).json({ error: 'Selected colour scheme is not available' });
+    return;
+  }
+  if (fontFamily !== undefined && normalizeFontOption(String(fontFamily)) !== String(fontFamily)) {
+    res.status(400).json({ error: 'Selected font is not available' });
+    return;
   }
 
   const db  = getDb();
@@ -463,6 +482,7 @@ router.post('/preferences', requireAuth, (req: Request, res: Response): void => 
     if (enterToSend !== undefined) { updates.push('enter_to_send = ?'); vals.push(enterToSend ? 1 : 0); }
     if (pushEnabled !== undefined) { updates.push('push_enabled = ?');   vals.push(pushEnabled ? 1 : 0); }
     if (fontSize    !== undefined) { updates.push('font_size = ?');     vals.push(Math.round(Number(fontSize))); }
+    if (fontFamily  !== undefined) { updates.push('font_family = ?');   vals.push(normalizeFontOption(String(fontFamily))); }
     if (updates.length > 0) {
       updates.push('updated_at = ?');
       vals.push(now, req.user!.id);
@@ -470,13 +490,14 @@ router.post('/preferences', requireAuth, (req: Request, res: Response): void => 
     }
   } else {
     db.prepare(
-      'INSERT INTO user_preferences (user_id, colour_scheme, enter_to_send, push_enabled, font_size, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+      'INSERT INTO user_preferences (user_id, colour_scheme, enter_to_send, push_enabled, font_size, font_family, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
     ).run(
       req.user!.id,
       scheme ?? 'default',
       enterToSend ? 1 : 0,
       pushEnabled ? 1 : 0,
       fontSize !== undefined ? Math.round(Number(fontSize)) : null,
+      fontFamily !== undefined ? normalizeFontOption(String(fontFamily)) : null,
       now,
     );
   }

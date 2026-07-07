@@ -46,7 +46,104 @@ const COLOUR_SCHEMES = {
   purple:  { name: 'Purple',  bg: '#1e1a2e', mine: '#533483', theirs: '#0f3460', surface: '#2e2a3e' },
   warm:    { name: 'Warm',    bg: '#2a1f0a', mine: '#7c4500', theirs: '#5c3d02', surface: '#3a2f1a' },
   forest:  { name: 'Forest',  bg: '#0d1f0d', mine: '#1b5e20', theirs: '#003d33', surface: '#1a2a1a' },
+  midnight:{ name: 'Midnight',bg: '#101820', mine: '#2364aa', theirs: '#3d5a80', surface: '#1f2a36' },
+  rose:    { name: 'Rose',    bg: '#26161d', mine: '#a23e48', theirs: '#6d597a', surface: '#3a222c' },
+  sage:    { name: 'Sage',    bg: '#18221b', mine: '#4f772d', theirs: '#31572c', surface: '#263528' },
+  steel:   { name: 'Steel',   bg: '#20252b', mine: '#3a6ea5', theirs: '#546a7b', surface: '#303841' },
+  sunset:  { name: 'Sunset',  bg: '#241b22', mine: '#c44536', theirs: '#5e548e', surface: '#352733' },
 };
+
+const FONT_OPTIONS = {
+  system: {
+    name: 'Default Sans',
+    stack: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  },
+  serif: {
+    name: 'Serif',
+    stack: 'Georgia, "Times New Roman", serif',
+  },
+  friendly: {
+    name: 'Friendly',
+    stack: '"Comic Sans MS", "Comic Sans", "Trebuchet MS", cursive, sans-serif',
+  },
+};
+
+function getAvailableColourSchemeIds() {
+  const ids = Array.isArray(appConfig.availableColourSchemes)
+    ? appConfig.availableColourSchemes
+    : Object.keys(COLOUR_SCHEMES);
+  const filtered = ids.filter(id => COLOUR_SCHEMES[id]);
+  return filtered.length > 0 ? filtered : ['default'];
+}
+
+function renderColourSchemeButtons() {
+  const container = document.getElementById('colour-scheme-list');
+  if (!container) return;
+
+  container.innerHTML = '';
+  getAvailableColourSchemeIds().forEach(id => {
+    const scheme = COLOUR_SCHEMES[id];
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'colour-scheme-btn';
+    btn.dataset.scheme = id;
+    btn.onclick = () => applyColourScheme(id);
+    btn.innerHTML = `
+      <div class="colour-swatch">
+        <span style="background:${scheme.bg}"></span>
+        <span style="background:${scheme.mine}"></span>
+        <span style="background:${scheme.theirs}"></span>
+      </div>${scheme.name}
+    `;
+    container.appendChild(btn);
+  });
+}
+
+function getAvailableFontOptionIds() {
+  const ids = Array.isArray(appConfig.fontOptions) ? appConfig.fontOptions : Object.keys(FONT_OPTIONS);
+  const filtered = ids.filter(id => FONT_OPTIONS[id]);
+  return filtered.length > 0 ? filtered : ['system'];
+}
+
+function renderFontFamilyButtons() {
+  const container = document.getElementById('font-family-list');
+  if (!container) return;
+
+  container.innerHTML = '';
+  getAvailableFontOptionIds().forEach(id => {
+    const option = FONT_OPTIONS[id];
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `font-family-btn font-preview-${id}`;
+    btn.dataset.fontFamily = id;
+    btn.onclick = () => applyFontFamily(id);
+    btn.innerHTML = `<span>${option.name}</span><span>Aa</span>`;
+    container.appendChild(btn);
+  });
+}
+
+function getConfiguredAppName() {
+  return (appConfig.siteTitle || 'Messaging').trim() || 'Messaging';
+}
+
+function applyAppConfigChrome() {
+  const appName = getConfiguredAppName();
+  document.title = appName;
+  originalTitle  = appName;
+
+  const headerTitle = document.getElementById('header-title');
+  if (headerTitle) headerTitle.textContent = (appConfig.mainHeader || appName).trim() || appName;
+
+  const settingsVersion = document.getElementById('settings-version');
+  if (settingsVersion && appConfig.appVersion) settingsVersion.textContent = `Version ${appConfig.appVersion}`;
+
+  if (appConfig.chatIconUrl) {
+    const headerLogo = document.getElementById('header-logo');
+    if (headerLogo) headerLogo.src = appConfig.chatIconUrl;
+    const loginLogo  = document.getElementById('login-logo');
+    if (loginLogo)  loginLogo.src  = appConfig.chatIconUrl;
+  }
+}
 
 // ── DOM element cache ────────────────────────────────────────────────────────
 const textInput       = document.getElementById('text');
@@ -454,25 +551,12 @@ async function loadConfig() {
     const res = await apiFetch('/api/config');
     appConfig  = await res.json();
 
-    if (appConfig.siteTitle) {
-      document.title = appConfig.siteTitle;
-      originalTitle  = appConfig.siteTitle;
-    }
-    const headerTitle = document.getElementById('header-title');
-    if (headerTitle && appConfig.mainHeader) headerTitle.textContent = appConfig.mainHeader;
-    const settingsVersion = document.getElementById('settings-version');
-    if (settingsVersion && appConfig.appVersion) settingsVersion.textContent = `Version ${appConfig.appVersion}`;
+    applyAppConfigChrome();
     if (appConfig.enableEmergencyExit) activateEmergencyExit();
+    renderColourSchemeButtons();
+    renderFontFamilyButtons();
 
     if (appConfig.turnstileSiteKey) loadTurnstile(appConfig.turnstileSiteKey);
-
-    // Apply custom chat icon if the admin has set one
-    if (appConfig.chatIconUrl) {
-      const headerLogo = document.getElementById('header-logo');
-      if (headerLogo) headerLogo.src = appConfig.chatIconUrl;
-      const loginLogo  = document.getElementById('login-logo');
-      if (loginLogo)  loginLogo.src  = appConfig.chatIconUrl;
-    }
   } catch (e) {
     console.warn('[config] could not load:', e.message);
   }
@@ -497,12 +581,15 @@ async function loadPreferences() {
     const res  = await apiFetch('/api/preferences');
     if (!res.ok) return;
     const data = await res.json();
-    if (data.scheme && COLOUR_SCHEMES[data.scheme]) applyColourScheme(data.scheme, false);
+    const availableSchemes = getAvailableColourSchemeIds();
+    const preferredScheme = data.scheme && availableSchemes.includes(data.scheme) ? data.scheme : availableSchemes[0];
+    applyColourScheme(preferredScheme, false);
     enterToSend = !!data.enterToSend;
     pushPreferenceEnabled = !!data.pushEnabled;
     const toggle = document.getElementById('enter-to-send-toggle');
     if (toggle) toggle.checked = enterToSend;
     if (data.fontSize != null) applyFontSize(data.fontSize, false);
+    applyFontFamily(data.fontFamily || appConfig.defaultFontFamily || 'system', false);
   } catch (e) {
     console.warn('[prefs] could not load:', e.message);
   }
@@ -1530,19 +1617,21 @@ document.getElementById('reaction-picker').addEventListener('click', async e => 
 });
 
 function applyColourScheme(name, save = true) {
-  const scheme = COLOUR_SCHEMES[name] || COLOUR_SCHEMES.default;
+  const availableSchemes = getAvailableColourSchemeIds();
+  const schemeName = availableSchemes.includes(name) ? name : availableSchemes[0];
+  const scheme = COLOUR_SCHEMES[schemeName] || COLOUR_SCHEMES.default;
   const root   = document.documentElement;
   root.style.setProperty('--color-bg',      scheme.bg);
   root.style.setProperty('--color-mine',    scheme.mine);
   root.style.setProperty('--color-theirs',  scheme.theirs);
   root.style.setProperty('--color-surface', scheme.surface);
   document.querySelectorAll('.colour-scheme-btn').forEach(btn =>
-    btn.classList.toggle('active', btn.dataset.scheme === name));
+    btn.classList.toggle('active', btn.dataset.scheme === schemeName));
   if (save) {
     apiFetch('/api/preferences', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ scheme: name }),
+      body:    JSON.stringify({ scheme: schemeName }),
     }).catch(e => console.warn('[prefs] save failed:', e.message));
   }
 }
@@ -1805,6 +1894,22 @@ async function loadFFmpeg() {
     coreURL: await toLocalBlobURL(`${coreBaseUrl}/ffmpeg-core.js`, 'text/javascript'),
     wasmURL: await toLocalBlobURL(`${coreBaseUrl}/ffmpeg-core.wasm`, 'application/wasm'),
   });
+}
+
+function applyFontFamily(name, save = true) {
+  const availableFonts = getAvailableFontOptionIds();
+  const fontName = availableFonts.includes(name) ? name : (appConfig.defaultFontFamily || availableFonts[0]);
+  const option = FONT_OPTIONS[fontName] || FONT_OPTIONS.system;
+  document.documentElement.style.setProperty('--app-font-family', option.stack);
+  document.querySelectorAll('.font-family-btn').forEach(btn =>
+    btn.classList.toggle('active', btn.dataset.fontFamily === fontName));
+  if (save) {
+    apiFetch('/api/preferences', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ fontFamily: fontName }),
+    }).catch(e => console.warn('[prefs] save failed:', e.message));
+  }
 }
 
 async function compressVideo(file) {
@@ -2177,15 +2282,11 @@ async function init() {
     const cfgRes = await fetch('/api/config', { credentials: 'same-origin' });
     if (cfgRes.ok) {
       appConfig = await cfgRes.json();
+      applyAppConfigChrome();
+      renderColourSchemeButtons();
+      renderFontFamilyButtons();
       registerServiceWorker();
       if (appConfig.turnstileSiteKey) loadTurnstile(appConfig.turnstileSiteKey);
-      // Apply custom icon immediately so the login screen shows the right logo
-      if (appConfig.chatIconUrl) {
-        const loginLogo  = document.getElementById('login-logo');
-        if (loginLogo)  loginLogo.src  = appConfig.chatIconUrl;
-        const headerLogo = document.getElementById('header-logo');
-        if (headerLogo) headerLogo.src = appConfig.chatIconUrl;
-      }
     }
 
     const res = await fetch('/api/me', { credentials: 'same-origin' });

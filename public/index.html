@@ -6,7 +6,8 @@
   <title>Loading…</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" type="image/svg+xml" href="/icon.svg">
-  <link rel="apple-touch-icon" href="/icon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/pwa-icon-180.png">
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -98,21 +99,7 @@
     <div id="colour-picker-title">Settings</div>
 
     <div style="font-size:0.8rem;color:#aaa;padding:4px 0 8px;">Colour Scheme</div>
-    <button class="colour-scheme-btn" data-scheme="default" onclick="applyColourScheme('default')">
-      <div class="colour-swatch"><span style="background:#2c2c2c"></span><span style="background:#206123"></span><span style="background:#215e6d"></span></div>Default
-    </button>
-    <button class="colour-scheme-btn" data-scheme="ocean" onclick="applyColourScheme('ocean')">
-      <div class="colour-swatch"><span style="background:#1a2a3a"></span><span style="background:#1a4f6e"></span><span style="background:#0d4d4d"></span></div>Ocean
-    </button>
-    <button class="colour-scheme-btn" data-scheme="purple" onclick="applyColourScheme('purple')">
-      <div class="colour-swatch"><span style="background:#1e1a2e"></span><span style="background:#533483"></span><span style="background:#0f3460"></span></div>Purple
-    </button>
-    <button class="colour-scheme-btn" data-scheme="warm" onclick="applyColourScheme('warm')">
-      <div class="colour-swatch"><span style="background:#2a1f0a"></span><span style="background:#7c4500"></span><span style="background:#5c3d02"></span></div>Warm
-    </button>
-    <button class="colour-scheme-btn" data-scheme="forest" onclick="applyColourScheme('forest')">
-      <div class="colour-swatch"><span style="background:#0d1f0d"></span><span style="background:#1b5e20"></span><span style="background:#003d33"></span></div>Forest
-    </button>
+    <div id="colour-scheme-list"></div>
 
     <hr class="panel-divider">
 
@@ -144,6 +131,9 @@
         style="flex:1;accent-color:#007bff;">
       <span style="font-size:1.2rem;line-height:1;">A</span>
     </div>
+
+    <div style="font-size:0.8rem;color:#aaa;padding:10px 0 6px;">Font</div>
+    <div id="font-family-list" class="font-family-list"></div>
 
     <hr class="panel-divider">
 

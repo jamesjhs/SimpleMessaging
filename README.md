@@ -1,5 +1,7 @@
 # TLS – Secure Messaging
 
+Version 1.2.3
+
 A self-hosted, end-to-end encrypted two-person chat application built with **Node.js**, **TypeScript**, **Express 5**, and **SQLCipher** (via `better-sqlite3-multiple-ciphers`).
 
 ---
@@ -20,9 +22,11 @@ A self-hosted, end-to-end encrypted two-person chat application built with **Nod
 - **Swipe-to-reply** and reply threading
 - **Typing indicator**
 - **Emergency exit** (configurable)
-- **Colour schemes** (Default, Ocean, Purple, Warm, Forest)
-- **Admin panel** – user management, report review, settings, `posts.json` import
-- **PWA support** (disabled by default; enable in Admin → Settings)
+- **Admin-controlled colour schemes** – 10 built-in palettes, with admin-selected availability for users
+- **Font preferences** – users can choose Default Sans, Serif, or Friendly; admins set the default font
+- **Configurable app name** – admin-set app name is used throughout the UI, PWA metadata, notifications, and emails; default is `Messaging`
+- **Admin panel** – user management, report review, settings, icon upload, `posts.json` import
+- **PWA support** – installable app metadata, service worker, push notifications, and generated compliant PNG/maskable icons
 
 ---
 
@@ -90,6 +94,9 @@ Push notifications remain off by default. To use them, the administrator must en
 server.ts            Express entry point
 db.ts                SQLCipher DB init, schema, password hashing, settings
 lib/auth.ts          Sessions, cookies, OTP, Turnstile, SMTP
+lib/appName.ts       Configured app-name fallback handling
+lib/colourSchemes.ts Colour palette registry and validation
+lib/fontOptions.ts   Font registry and validation
 routes/
   auth.ts            Login, OTP verification, logout, change-password
   messages.ts        Chat messages, typing, view-once, reports, preferences
@@ -100,6 +107,7 @@ public/
   index.html / style.css / script.js    Chat UI (browser JS)
   admin.html / admin.css / admin.js     Admin panel
   manifest.json / sw.js                 PWA (disabled by default)
+  pwa-icon-*.png / favicon-32.png       Generated PWA and browser icons
 ```
 
 ---
@@ -128,3 +136,191 @@ public/
 ## Licence
 
 Private / proprietary – all rights reserved.
+
+## Password reset
+
+# Powershell
+
+@'
+require("dotenv").config();
+const Database = require("better-sqlite3-multiple-ciphers");
+const crypto = require("crypto");
+const path = require("path");
+
+function deriveDbKey(passphrase) {
+  return crypto.pbkdf2Sync(
+    passphrase,
+    Buffer.from("tls-db-key-v1", "utf8"),
+    100000,
+    32,
+    "sha256"
+  ).toString("hex");
+}
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, 64, (err, key) => {
+      if (err) return reject(err);
+      resolve(`${salt}:${key.toString("hex")}`);
+    });
+  });
+}
+
+(async () => {
+  const passphrase = process.env.DB_ENCRYPTION_KEY;
+  const username = process.env.ADMIN_USERNAME;
+  const password = process.env.ADMIN_PASSWORD;
+
+  if (!passphrase) throw new Error("DB_ENCRYPTION_KEY is missing");
+  if (!username) throw new Error("ADMIN_USERNAME is missing");
+  if (!password) throw new Error("ADMIN_PASSWORD is missing");
+
+  const dbPath = path.resolve(process.env.DB_PATH || "./data/tls.db");
+  const db = new Database(dbPath);
+
+  db.pragma("cipher='sqlcipher'");
+  db.pragma(`key="x'${deriveDbKey(passphrase)}'"`);
+
+  const hash = await hashPassword(password);
+
+  const result = db.prepare(`
+    UPDATE users
+    SET password_hash = ?,
+        force_password_change = 1,
+        failed_login_attempts = 0,
+        locked_until = NULL,
+        login_locked = 0
+    WHERE username = ? AND role = 'admin'
+  `).run(hash, username);
+
+  console.log(`Reset password for ${result.changes} admin account(s): ${username}`);
+  db.close();
+})();
+'@ | node
+
+# Bash
+
+node <<'NODE'
+require("dotenv").config();
+const Database = require("better-sqlite3-multiple-ciphers");
+const crypto = require("crypto");
+const path = require("path");
+
+function deriveDbKey(passphrase) {
+  return crypto.pbkdf2Sync(
+    passphrase,
+    Buffer.from("tls-db-key-v1", "utf8"),
+    100000,
+    32,
+    "sha256"
+  ).toString("hex");
+}
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, 64, (err, key) => {
+      if (err) return reject(err);
+      resolve(`${salt}:${key.toString("hex")}`);
+    });
+  });
+}
+
+(async () => {
+  const passphrase = process.env.DB_ENCRYPTION_KEY;
+  const username = process.env.ADMIN_USERNAME;
+  const password = process.env.ADMIN_PASSWORD;
+
+  if (!passphrase) throw new Error("DB_ENCRYPTION_KEY is missing");
+  if (!username) throw new Error("ADMIN_USERNAME is missing");
+  if (!password) throw new Error("ADMIN_PASSWORD is missing");
+
+  const dbPath = path.resolve(process.env.DB_PATH || "./data/tls.db");
+  const db = new Database(dbPath);
+
+  db.pragma("cipher='sqlcipher'");
+  db.pragma(`key="x'${deriveDbKey(passphrase)}'"`);
+
+  const hash = await hashPassword(password);
+
+  const result = db.prepare(`
+    UPDATE users
+    SET password_hash = ?,
+        force_password_change = 1,
+        failed_login_attempts = 0,
+        locked_until = NULL,
+        login_locked = 0
+    WHERE username = ? AND role = 'admin'
+  `).run(hash, username);
+
+  console.log(`Reset password for ${result.changes} admin account(s): ${username}`);
+  db.close();
+})();
+NODE
+
+## Account reset 
+
+# Powershell 
+
+@'
+require("dotenv").config();
+const Database = require("better-sqlite3-multiple-ciphers");
+const crypto = require("crypto");
+const path = require("path");
+
+const passphrase = process.env.DB_ENCRYPTION_KEY;
+const username = process.env.ADMIN_USERNAME;
+if (!passphrase) throw new Error("DB_ENCRYPTION_KEY is missing");
+if (!username) throw new Error("ADMIN_USERNAME is missing");
+
+const dbPath = path.resolve(process.env.DB_PATH || "./data/tls.db");
+const key = crypto.pbkdf2Sync(passphrase, Buffer.from("tls-db-key-v1", "utf8"), 100000, 32, "sha256").toString("hex");
+
+const db = new Database(dbPath);
+db.pragma("cipher='sqlcipher'");
+db.pragma(`key="x'${key}'"`);
+
+const result = db.prepare(`
+  UPDATE users
+  SET failed_login_attempts = 0,
+      locked_until = NULL,
+      login_locked = 0
+  WHERE username = ? AND role = 'admin'
+`).run(username);
+
+console.log(`Unlocked ${result.changes} admin account(s): ${username}`);
+db.close();
+'@ | node
+
+# Bash
+
+node <<'NODE'
+require("dotenv").config();
+const Database = require("better-sqlite3-multiple-ciphers");
+const crypto = require("crypto");
+const path = require("path");
+
+const passphrase = process.env.DB_ENCRYPTION_KEY;
+const username = process.env.ADMIN_USERNAME;
+if (!passphrase) throw new Error("DB_ENCRYPTION_KEY is missing");
+if (!username) throw new Error("ADMIN_USERNAME is missing");
+
+const dbPath = path.resolve(process.env.DB_PATH || "./data/tls.db");
+const key = crypto.pbkdf2Sync(passphrase, Buffer.from("tls-db-key-v1", "utf8"), 100000, 32, "sha256").toString("hex");
+
+const db = new Database(dbPath);
+db.pragma("cipher='sqlcipher'");
+db.pragma(`key="x'${key}'"`);
+
+const result = db.prepare(`
+  UPDATE users
+  SET failed_login_attempts = 0,
+      locked_until = NULL,
+      login_locked = 0
+  WHERE username = ? AND role = 'admin'
+`).run(username);
+
+console.log(`Unlocked ${result.changes} admin account(s): ${username}`);
+db.close();
+NODE

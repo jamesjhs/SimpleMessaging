@@ -1,6 +1,6 @@
 # TLS — Technical Manual
 
-**Version 1.1.0**  
+**Version 1.2.3**  
 *TLS Secure Messaging — encrypted two-person chat*
 
 ---
@@ -69,7 +69,7 @@ TLS is a minimal, end-to-end encrypted, two-person secure messaging application.
     ├─ /uploads/*       protected static (session-gated)
     ├─ /readyz          health-check
     ├─ /sw.js           service worker (version-stamped at runtime)
-    └─ /*               public static (index.html, style.css, script.js, icon.svg)
+    └─ /*               public static (index.html, style.css, script.js, icon.svg, generated PWA icons)
         │
         ▼
  SQLCipher database  (data/tls.db)
@@ -100,7 +100,7 @@ Create a `.env` file in the project root (see `.env.example`):
 | `SMTP_STARTTLS` | Optional | Set `true` to require STARTTLS. |
 | `SMTP_USER` | Optional | SMTP authentication username. |
 | `SMTP_PASSWORD` | Optional | SMTP authentication password. |
-| `SMTP_FROM` | Optional | Sender address (default: `TLS <noreply@localhost>`). |
+| `SMTP_FROM` | Optional | Sender address (default: configured app name with `noreply@localhost`). |
 | `TURNSTILE_SECRET_KEY` | Optional | Cloudflare Turnstile secret for bot protection on the login form. |
 | `TURNSTILE_SITE_KEY` | Optional | Cloudflare Turnstile site key (delivered to the browser via `/api/config`). |
 
@@ -197,9 +197,11 @@ Per-user UI settings.
 | Column | Type | Notes |
 |--------|------|-------|
 | `user_id` | INTEGER PK FK → users.id | |
-| `colour_scheme` | TEXT | `'default'`, `'ocean'`, `'purple'`, `'warm'`, `'forest'` |
+| `colour_scheme` | TEXT | Selected built-in colour palette id |
 | `enter_to_send` | INTEGER | `1` = Enter key submits the form |
 | `push_enabled` | INTEGER | User's persisted preference for push notifications on their account |
+| `font_size` | INTEGER | Chat message font size in pixels |
+| `font_family` | TEXT | Selected built-in font id (`system`, `serif`, `friendly`) |
 | `updated_at` | INTEGER | |
 
 #### `app_settings`
@@ -209,9 +211,12 @@ Key/value store for admin-configurable settings.
 |-----|---------|-------------|
 | `pwa_enabled` | `'0'` | Enable PWA manifest and service worker |
 | `push_notifications_enabled` | `'0'` | Allow installed PWA clients to opt in to push notifications |
+| `available_colour_schemes` | All built-ins | Comma-separated palette ids exposed to end users |
+| `default_font_family` | `'system'` | Default chat font for users without a personal font choice |
+| `chat_icon_url` | unset | Current processed app/chat icon URL, set by the admin icon upload endpoint |
 | `report_enabled` | `'0'` | Show report button on received messages |
-| `site_title` | `'TLS'` | Browser tab title |
-| `main_header` | `'TLS'` | Chat header text (also the emergency-exit trigger) |
+| `site_title` | `'Messaging'` | Browser tab title and app name |
+| `main_header` | `'Messaging'` | Chat header text (also the emergency-exit trigger) |
 | `enable_view_once` | `'1'` | Show view-once option on media uploads |
 | `enable_blur` | `'1'` | Show blur option on media uploads |
 | `enable_emergency_exit` | `'1'` | Enable header-click emergency exit |
@@ -290,15 +295,15 @@ All API responses are JSON. Authentication errors return HTTP 401; authorisation
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/me` | Session | Returns `{ user, role, forcePasswordChange, twoFaEnabled }`. |
-| GET | `/config` | None | Returns public site configuration from `app_settings` and Turnstile site key. |
+| GET | `/config` | None | Returns public site configuration from `app_settings`, including app name, palette/font options, PWA/push flags, icon URL, app version, and Turnstile site key. |
 | GET | `/messages` | Session | Returns `{ posts, total, typing, lastSeen }`. Supports `?limit=N&before=<timestamp>`. Updates `users.last_seen`. |
 | POST | `/messages` | Session | Create a new message. Accepts `multipart/form-data` with optional `image` file. Fields: `text`, `viewOnce`, `isBlurred`, `replyUser`, `replyText`, `replyId`, `submittedAt`. |
 | DELETE | `/messages/:id` | Session | Soft-deletes a message. Own messages only; admins can delete any. |
 | POST | `/messages/:id/view` | Session | Marks a view-once message as viewed (inserts into `message_views`). Returns `{ imagePath }`. |
 | POST | `/messages/:id/report` | Session | Reports a message (requires `report_enabled = '1'`). |
 | POST | `/typing` | Session | Sets typing state: `{ isTyping: boolean }`. |
-| GET | `/preferences` | Session | Returns `{ scheme, enterToSend }`. |
-| POST | `/preferences` | Session | Saves `{ scheme?, enterToSend? }`. |
+| GET | `/preferences` | Session | Returns `{ scheme, enterToSend, pushEnabled, fontSize, fontFamily }`. |
+| POST | `/preferences` | Session | Saves `{ scheme?, enterToSend?, pushEnabled?, fontSize?, fontFamily? }`. |
 
 ### Admin — `/api/admin`
 
@@ -315,7 +320,9 @@ All routes require `role = 'admin'`.
 | PATCH | `/reports/:id` | Mark a report reviewed. Body: `{ actionTaken? }`. |
 | GET | `/settings` | Get all `app_settings` values. |
 | PATCH | `/settings` | Update one or more `app_settings` values. |
-| POST | `/import` | Import a legacy `posts.json` file. Accepts `multipart/form-data` with a `file` field. Returns `{ imported, skipped, createdUsers }`. |
+| POST | `/icon` | Uploads a JPG, PNG, or WebP icon and generates compliant favicon, Apple touch icon, standard PWA icons, and maskable PWA icons. |
+| POST | `/import/preview` | Preview a legacy `posts.json` import and return suggested user mappings. |
+| POST | `/import/commit` | Commit a previewed import with admin-selected mappings. Returns `{ imported, skipped, createdUsers }`. |
 
 ### Infrastructure
 
@@ -397,9 +404,13 @@ Controlled via the `enable_emergency_exit` app setting.
 
 ### 8.11 Colour Schemes
 
-Five built-in themes: Default, Ocean, Purple, Warm, Forest. Applied via CSS custom properties. The active scheme is persisted in `user_preferences.colour_scheme` and restored on load.
+Ten built-in themes are available: Default, Ocean, Purple, Warm, Forest, Midnight, Rose, Sage, Steel, and Sunset. Applied via CSS custom properties. The admin panel controls which palette ids are exposed to end users through `available_colour_schemes`; preference saves reject disabled or unknown schemes. The active scheme is persisted in `user_preferences.colour_scheme` and restored on load, falling back to the first enabled palette if the saved scheme is no longer available.
 
-### 8.12 In-App Video Recorder
+### 8.12 Fonts
+
+Users can choose between three built-in font stacks: Default Sans, Serif, and Friendly. Friendly uses a Comic Sans-style system stack (`Comic Sans MS`, then compatible cursive/sans fallbacks). The admin panel controls the default font for users who have not saved a personal choice through `default_font_family`; saved user choices are stored in `user_preferences.font_family`.
+
+### 8.13 In-App Video Recorder
 
 The `🎥` button opens a full-screen recorder using `MediaRecorder` (WebRTC). Maximum recording time is 60 seconds. The recording is submitted directly as a file to `POST /api/messages`. Optional FFmpeg WASM compression is attempted if the CDN libraries are available.
 
@@ -462,11 +473,11 @@ PWA support is optional and controlled by the `pwa_enabled` app setting. When di
 
 The service worker (`public/sw.js`) implements:
 
-- **Install**: pre-caches the app shell (`/`, `/style.css`, `/script.js`, `/icon.svg`).
+- **Install**: pre-caches the app shell (`/`, `/style.css`, `/script.js`) and generated PWA icon PNGs.
 - **Activate**: deletes all caches whose name does not match the current `CACHE_NAME`, ensuring stale assets from previous versions are evicted.
 - **Fetch**: network-first for all requests, falling back to cache for shell assets. API calls, uploads, and admin routes bypass the cache entirely.
 
-**Automatic cache busting on deploy**: The server reads `sw.js` at startup and replaces the literal string `tls-__APP_VERSION__` with the actual package version (e.g. `tls-1.1.0`). The browser then sees a changed SW script, triggering an update cycle. The client-side `updatefound` handler reloads the page automatically once the new SW is installed.
+**Automatic cache busting on deploy**: The server reads `sw.js` at startup and replaces the literal string `tls-__APP_VERSION__` with the actual package version (e.g. `tls-1.2.3`). The browser then sees a changed SW script, triggering an update cycle. The client-side `updatefound` handler reloads the page automatically once the new SW is installed.
 
 ### Install + Push Onboarding
 
@@ -477,7 +488,7 @@ The service worker (`public/sw.js`) implements:
 
 ### Icon
 
-The app icon is defined as an SVG (`public/icon.svg`: a chat bubble on a dark background). Modern browsers and Android PWAs support SVG icons natively. The `<link rel="icon" type="image/svg+xml">` tag in `index.html` ensures the icon appears in the browser tab.
+The default app icon starts from `public/icon.svg`, with generated PNG assets for favicon, Apple touch icon, standard PWA icons, and maskable PWA icons. When an admin uploads a JPG, PNG, or WebP in the admin panel, the server processes it with Sharp into fixed PNG outputs (`pwa-icon-192.png`, `pwa-icon-512.png`, `pwa-icon-maskable-192.png`, `pwa-icon-maskable-512.png`, `pwa-icon-180.png`, and related sizes). The manifest is generated dynamically when PWA support is enabled so install surfaces use the current processed icon set.
 
 ---
 
@@ -502,7 +513,7 @@ Displays all reported messages with the reporter name, message author, message c
 
 ### Settings
 
-All `app_settings` keys are editable from the admin panel. Changes take effect immediately.
+The admin panel exposes app identity, chat controls, PWA/push settings, colour palette availability, default font, and icon upload. Changes take effect immediately. The configured app name is used in the browser title, chat/admin shell, PWA manifest, notification fallback title, and system emails. Icon uploads are processed server-side into the fixed PNG and maskable icon set used by browser and PWA install surfaces.
 
 ### Import
 
@@ -644,7 +655,7 @@ When behind a proxy, set `TRUST_PROXY=1` (or another valid Express trust-proxy v
 
 ```bash
 curl https://chat.example.com/readyz
-# {"ok":true,"service":"TLS","version":"1.1.0","timestamp":"2026-05-04T..."}
+# {"ok":true,"service":"Messaging","version":"1.2.3","timestamp":"2026-05-04T..."}
 ```
 
 ### Data Backup

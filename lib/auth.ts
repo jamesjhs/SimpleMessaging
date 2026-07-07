@@ -7,6 +7,7 @@ import crypto       from 'crypto';
 import nodemailer   from 'nodemailer';
 import type { Request, Response, NextFunction } from 'express';
 import { getDb }    from '../db';
+import { getAppName } from './appName';
 import type { AuthUser } from '../types';
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -39,7 +40,7 @@ export async function sendMail(
 ): Promise<void> {
   const transport = getTransport();
   await transport.sendMail({
-    from:    process.env.SMTP_FROM ?? 'TLS <noreply@localhost>',
+    from:    process.env.SMTP_FROM ?? `"${getAppName()}" <noreply@localhost>`,
     to,
     subject,
     text,
