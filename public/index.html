@@ -92,6 +92,11 @@
     </div>
   </div>
 
+  <footer id="adult-view-footer" aria-label="Adult view information">
+    <span id="adult-footer-version">Version</span>
+    <button type="button" onclick="showPrivacyPolicy()">Privacy Policy</button>
+  </footer>
+
   <button id="jumpToBottom" onclick="scrollToBottom()" title="Jump to bottom">↓</button>
 
   <!-- ── Settings panel ────────────────────────────────────────────────── -->
@@ -103,7 +108,7 @@
 
     <hr class="panel-divider">
 
-    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 0;font-size:0.9rem;">
+    <label id="enter-to-send-row" style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 0;font-size:0.9rem;">
       <input type="checkbox" id="enter-to-send-toggle" onchange="toggleEnterToSend(this.checked)"> ⏎ Enter to Send
     </label>
 
@@ -212,6 +217,51 @@
       <div style="display:flex;gap:8px;margin-top:8px;">
         <button type="button" onclick="submitChangePassword()">Save</button>
         <button type="button" onclick="hideChangePasswordDialog()" style="background:#555;">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Adult privacy policy ──────────────────────────────────────────── -->
+  <div id="privacy-policy-overlay" style="display:none;">
+    <div id="privacy-policy-box" role="dialog" aria-modal="true" aria-labelledby="privacy-policy-title">
+      <button type="button" class="privacy-close-btn" onclick="hidePrivacyPolicy()" aria-label="Close privacy policy">x</button>
+      <h2 id="privacy-policy-title">Privacy Policy</h2>
+      <p><strong>Data controller:</strong> James Rowson. This secure messaging site is part of Jahosi.co.uk.</p>
+
+      <h3>Purpose</h3>
+      <p>This site provides private messaging between invited account holders. It also includes safeguarding and moderation functions: Adult accounts are view-only observer accounts that can review conversations and report messages for safety, without appearing present, sending messages, or changing read receipts.</p>
+
+      <h3>Data Stored</h3>
+      <p>The service stores account details, display names, optional email addresses, password hashes, security status, user preferences, messages, uploaded media paths, reports, reactions, view-once view records for basic users, and basic users' last-seen timestamps. If push notifications are enabled for a basic user, the service stores that user's browser push subscription.</p>
+
+      <h3>Safeguarding And Adult Accounts</h3>
+      <p>Adult users can view posts and media, including view-once media, for safeguarding. Adult viewing does not write a view-once record, update presence, or affect read receipts. Only basic user activity is used for read receipts and online/last-seen status. If an Adult reports a message, the report is stored against that Adult account and can be reviewed by an administrator.</p>
+
+      <h3>Storage And Longevity</h3>
+      <p>Messages and message metadata are stored in the encrypted database until they are removed by an administrator or the service operator. Deleted messages are soft-deleted: they stop appearing in chat but their content and media path are retained for audit. Uploaded images and videos are stored in the protected uploads directory and are not automatically deleted by the app. Reports and review notes are retained for moderation/audit unless removed by the service operator.</p>
+      <p>Login sessions expire after 7 days. One-time passcodes for two-factor login or invitations expire after 10 minutes, and expired session/passcode records are periodically cleaned up. Basic users' last-seen timestamps, view-once view records, preferences, and any push subscriptions remain stored until changed, cleared, or the account/data is removed. Disabled accounts are retained so message history remains attributable.</p>
+
+      <h3>Security</h3>
+      <p>The application stores its main database using SQLCipher encryption. Uploaded media is served only to authenticated sessions. Passwords are stored as salted hashes, not plaintext. If Cloudflare Turnstile is configured, login challenge data is sent to Cloudflare for bot protection. Email addresses may be used to send invite or two-factor authentication codes through the configured mail service.</p>
+
+      <h3>Sharing</h3>
+      <p>Message content is not sold, used for advertising, or sent to analytics services by this application. Access is limited to authenticated users according to their role, Adult safeguarding observers, administrators, and the service operator where needed to run, secure, back up, or moderate the service.</p>
+
+      <h3>Your Choices</h3>
+      <p>Users can change their password and, where available, adjust display preferences. Requests about access, correction, deletion, or safeguarding records should be directed to James Rowson through Jahosi.co.uk. Some information may need to be retained where required for safety, security, audit, or safeguarding purposes.</p>
+    </div>
+  </div>
+
+  <!-- ── Report reason dialog ──────────────────────────────────────────── -->
+  <div id="report-message-overlay" style="display:none;">
+    <div id="report-message-box" role="dialog" aria-modal="true" aria-labelledby="report-message-title">
+      <h3 id="report-message-title">Send this for moderation?</h3>
+      <p>This will hide the message from normal chat while an administrator reviews it.</p>
+      <textarea id="report-reason-input" rows="4" maxlength="1000" placeholder="Tell us what worried you about this message"></textarea>
+      <p id="report-message-error" class="login-error"></p>
+      <div class="report-dialog-actions">
+        <button type="button" onclick="hideReportDialog()" class="report-cancel-btn">Cancel</button>
+        <button type="button" onclick="submitReportDialog()">Send report</button>
       </div>
     </div>
   </div>

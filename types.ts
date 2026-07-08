@@ -5,13 +5,15 @@
 
 // ── Database row shapes ───────────────────────────────────────────────────────
 
+export type UserRole = 'admin' | 'adult' | 'user';
+
 export interface DbUser {
   id:                    number;
   username:              string;
   display_name:          string;
   password_hash:         string;
   email:                 string | null;
-  role:                  'admin' | 'user';
+  role:                  UserRole;
   force_password_change: 0 | 1;
   two_fa_enabled:        0 | 1;
   enabled:               0 | 1;
@@ -52,10 +54,12 @@ export interface DbReport {
   message_id:   string;
   reported_by:  number;
   reported_at:  number;
+  reason:       string | null;
   reviewed:     0 | 1;
   reviewed_by:  number | null;
   reviewed_at:  number | null;
   action_taken: string | null;
+  outcome_message: string | null;
 }
 
 export interface DbOtpToken {
@@ -93,7 +97,7 @@ export interface AuthUser {
   id:                    number;
   username:              string;
   display_name:          string;
-  role:                  'admin' | 'user';
+  role:                  UserRole;
   force_password_change: 0 | 1;
   two_fa_enabled:        0 | 1;
   enabled:               0 | 1;
@@ -132,6 +136,10 @@ export interface ApiPost {
   replyText: string | null;
   replyId:   string | null;
   reactions: { emoji: string; users: string[] }[];
+  flagged:   boolean;
+  flagState: 'none' | 'adult' | 'hidden' | 'outcome';
+  moderationOutcome: string | null;
+  flagStatusText: string | null;
 }
 
 export interface ApiMessagesResponse {

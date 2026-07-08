@@ -67,6 +67,12 @@ function fmtDate(ts) {
   return new Date(ts).toLocaleString();
 }
 
+function roleBadgeClass(role) {
+  if (role === 'admin') return 'badge-yellow';
+  if (role === 'adult') return 'badge-green';
+  return 'badge-blue';
+}
+
 function renderAvailableColourSchemes(catalogIds, selectedValue) {
   const container = document.getElementById('available-colour-schemes');
   if (!container) return;
@@ -110,7 +116,7 @@ async function loadUsers() {
       <td>${esc(u.username)}</td>
       <td>${esc(u.display_name)}</td>
       <td>${esc(u.email || '—')}</td>
-      <td><span class="badge ${u.role === 'admin' ? 'badge-yellow' : 'badge-blue'}">${u.role}</span></td>
+      <td><span class="badge ${roleBadgeClass(u.role)}">${u.role}</span></td>
       <td>${u.two_fa_enabled ? '✓' : '—'}</td>
       <td>
         <span class="badge ${u.enabled ? 'badge-green' : 'badge-red'}">${u.enabled ? 'Active' : 'Disabled'}</span>
@@ -287,23 +293,22 @@ async function loadReports() {
   tbody.innerHTML = '';
   reports.forEach(r => {
     const tr = document.createElement('tr');
-    const preview = r.message_text
-      ? esc(r.message_text.slice(0, 80)) + (r.message_text.length > 80 ? '…' : '')
-      : (r.image_path ? '[Media]' : '—');
+    const messageHtml = renderReportMessage(r);
     tr.innerHTML = `
       <td>${r.id}</td>
       <td>${fmtDate(r.reported_at)}</td>
       <td>${esc(r.reporter_name)}</td>
       <td>${esc(r.author_name)}</td>
-      <td title="${esc(r.message_text || '')}">${preview}</td>
-      <td>
+      <td>${esc(r.reason || 'No reason supplied')}</td>
+      <td>${messageHtml}</td>
+      <td class="reports-status-cell">
         ${r.reviewed
-          ? `<span class="badge badge-green">Reviewed</span><br><small>${esc(r.action_taken || '')}</small>`
+          ? `<span class="badge badge-green">Completed</span><br><small>${esc(r.action_taken || 'Hidden from chat')}</small>${r.outcome_message ? `<br><small>Outcome: ${esc(r.outcome_message)}</small>` : ''}`
           : `<span class="badge badge-yellow">Pending</span>`}
       </td>
       <td>
         ${!r.reviewed
-          ? `<button class="btn-sm btn-edit" onclick="reviewReport(${r.id})">Review</button>`
+          ? `<button class="btn-sm btn-edit" onclick="reviewReport(${r.id})">Mark Hidden</button>`
           : '—'}
       </td>
     `;
@@ -311,13 +316,29 @@ async function loadReports() {
   });
 }
 
+function renderReportMessage(r) {
+  const parts = [];
+  if (r.message_text) {
+    parts.push(`<div class="report-message-text">${linkifyAdmin(r.message_text)}</div>`);
+  }
+  if (r.image_path) {
+    const path = esc(r.image_path);
+    const isVideo = /\.(mp4|webm)$/i.test(r.image_path);
+    parts.push(isVideo
+      ? `<video class="report-media" src="${path}" controls preload="metadata"></video>`
+      : `<a href="${path}" target="_blank" rel="noopener noreferrer"><img class="report-media" src="${path}" alt="Reported media"></a>`);
+  }
+  if (parts.length === 0) return '—';
+  return parts.join('');
+}
+
 async function reviewReport(id) {
-  const action = prompt('Action taken (e.g. "warning issued", "message removed"):', 'reviewed');
-  if (action === null) return; // cancelled
+  const outcome = prompt('Optional outcome to show to the reporting user:', 'This message has been sent for moderation and hidden from chat.');
+  if (outcome === null) return; // cancelled
   const res = await apiFetch(`/api/admin/reports/${id}`, {
     method:  'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ actionTaken: action }),
+    body:    JSON.stringify({ actionTaken: 'Hidden from chat', outcomeMessage: outcome }),
   });
   if (!res.ok) { alert('Failed to update report.'); return; }
   loadReports();
@@ -545,6 +566,13 @@ function esc(str) {
   return String(str)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+}
+
+function linkifyAdmin(text) {
+  const escaped = esc(text);
+  return escaped.replace(/(https?:\/\/[^\s"'<>)]+)/g, url =>
+    `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`
+  );
 }
 
 // Close modal on outside click

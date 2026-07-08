@@ -93,6 +93,14 @@ th, td {
 th { background: var(--admin-surface); color: var(--admin-muted); font-weight: 600; }
 tr:hover td { background: rgba(255,255,255,0.02); }
 
+#reports-table .reports-status-col,
+#reports-table .reports-status-cell {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 180px;
+  max-width: 300px;
+}
+
 /* ── Buttons ───────────────────────────────────────────────────────────────── */
 .btn-primary {
   background: #007bff;
@@ -236,6 +244,22 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .success-msg { color: #4caf50; font-size: 0.85rem; min-height: 20px; margin-bottom: 10px; }
 .help-text   { color: var(--admin-muted); font-size: 0.83rem; margin-bottom: 12px; line-height: 1.5; }
 .help-text code { background: #2a2a3e; padding: 1px 4px; border-radius: 3px; font-size: 0.82rem; }
+
+.report-message-text {
+  max-width: 360px;
+  white-space: pre-wrap;
+  line-height: 1.4;
+}
+
+.report-media {
+  display: block;
+  max-width: 220px;
+  max-height: 180px;
+  margin-top: 8px;
+  border-radius: 6px;
+  background: #111;
+  object-fit: contain;
+}
 
 /* ── File label ────────────────────────────────────────────────────────────── */
 .file-label {

@@ -76,7 +76,7 @@ router.post(
   const ok = await verifyPassword(password, user.password_hash);
   if (!ok) {
     const newCount = (user.failed_login_attempts ?? 0) + 1;
-    if (newCount >= 3) {
+    if (newCount > 3) {
       db.prepare(
         'UPDATE users SET failed_login_attempts = ?, login_locked = 1, locked_until = NULL WHERE id = ?',
       ).run(newCount, user.id);
@@ -84,7 +84,7 @@ router.post(
         error:  'Your account has been locked due to too many failed login attempts. Please contact your administrator to unlock it.',
         locked: true,
       });
-    } else if (newCount === 2) {
+    } else if (newCount === 3) {
       db.prepare(
         'UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?',
       ).run(newCount, now + 30_000, user.id);

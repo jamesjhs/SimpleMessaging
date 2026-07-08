@@ -21,6 +21,44 @@ body {
   transition: background-color 0.3s;
 }
 
+body.read-only-chat {
+  padding-bottom: 64px;
+}
+
+#adult-view-footer {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 800px;
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #252525;
+  border-top: 1px solid #555;
+  box-shadow: 0 -3px 14px rgba(0,0,0,0.45);
+  z-index: 260;
+  font-size: 0.78rem;
+  color: #bbb;
+}
+
+#adult-view-footer button {
+  background: transparent;
+  border: 1px solid #777;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+}
+
+#adult-view-footer button:hover {
+  background: rgba(255,255,255,0.1);
+}
+
 /* ── Header ────────────────────────────────────────────────────────────── */
 h1#main-title {
   position: sticky;
@@ -74,6 +112,38 @@ h1#main-title {
 }
 .post.mine   { background: var(--color-mine);   align-self: flex-end;  border-bottom-right-radius: 2px; }
 .post.theirs { background: var(--color-theirs); align-self: flex-start; border-bottom-left-radius: 2px; }
+.post.flagged-adult {
+  outline: 2px solid #ffca28;
+  box-shadow: 0 0 0 3px rgba(255,202,40,0.18);
+}
+.post.flagged-hidden,
+.post.flagged-outcome {
+  background: #555;
+  color: #eee;
+  font-style: italic;
+}
+.flagged-label {
+  display: block;
+  margin-bottom: 5px;
+  color: #ffca28;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.flagged-status {
+  display: block;
+  margin: -2px 0 6px;
+  color: #ffe082;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.moderation-outcome-label {
+  display: block;
+  margin-bottom: 5px;
+  color: #9bd4ff;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
 
 .post-header { font-size: 0.75rem; color: #ddd; display: block; margin-bottom: 3px; }
 .message-text { font-size: var(--chat-font-size); line-height: 1.4; }
@@ -467,6 +537,128 @@ textarea#text {
 #change-password-box button {
   background: #007bff; border: none; color: #fff; border-radius: 8px;
   padding: 10px; font-size: 0.95rem; cursor: pointer;
+}
+
+/* ── Privacy policy overlay ─────────────────────────────────────────────── */
+#privacy-policy-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.76);
+  z-index: 360;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+
+#privacy-policy-box {
+  position: relative;
+  width: min(720px, 100%);
+  max-height: min(780px, 88vh);
+  overflow: auto;
+  background: #333;
+  border: 1px solid #5b5b5b;
+  border-radius: 12px;
+  padding: 22px 24px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.65);
+  color: #eee;
+  line-height: 1.5;
+}
+
+#privacy-policy-box h2 {
+  margin: 0 36px 12px 0;
+  font-size: 1.25rem;
+}
+
+#privacy-policy-box h3 {
+  margin: 18px 0 6px;
+  font-size: 0.98rem;
+}
+
+#privacy-policy-box p {
+  margin: 0 0 10px;
+  color: #ddd;
+  font-size: 0.9rem;
+}
+
+.privacy-close-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 30px;
+  height: 30px;
+  border: 1px solid #666;
+  border-radius: 50%;
+  background: #444;
+  color: #fff;
+  cursor: pointer;
+}
+
+/* ── Report dialog ──────────────────────────────────────────────────────── */
+#report-message-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.72);
+  z-index: 365;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+
+#report-message-box {
+  width: min(420px, 100%);
+  background: #333;
+  border: 1px solid #5b5b5b;
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.65);
+}
+
+#report-message-box h3 {
+  margin: 0 0 8px;
+}
+
+#report-message-box p {
+  margin: 0 0 12px;
+  color: #ddd;
+  font-size: 0.9rem;
+}
+
+#report-reason-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 100px;
+  max-height: 220px;
+  background: #444;
+  border: 1px solid #666;
+  border-radius: 8px;
+  color: #fff;
+  padding: 10px 12px;
+  font: inherit;
+  outline: none;
+}
+
+#report-reason-input:focus {
+  border-color: #007bff;
+}
+
+.report-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.report-dialog-actions button {
+  background: #007bff;
+  border: none;
+  color: #fff;
+  border-radius: 8px;
+  padding: 9px 14px;
+  cursor: pointer;
+}
+
+.report-dialog-actions .report-cancel-btn {
+  background: #555;
 }
 
 /* ── Load-more sentinel ──────────────────────────────────────────────────── */

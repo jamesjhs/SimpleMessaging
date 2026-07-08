@@ -15,7 +15,7 @@ import { rateLimiter }                                 from '../lib/rateLimiter'
 import { COLOUR_SCHEME_IDS, parseAvailableColourSchemes } from '../lib/colourSchemes';
 import { getAppName, getMainHeader }                   from '../lib/appName';
 import { FONT_OPTION_IDS, normalizeFontOption }         from '../lib/fontOptions';
-import type { DbUser }                                 from '../types';
+import type { DbUser, UserRole }                       from '../types';
 
 const router  = Router();
 const jsonUp  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -25,6 +25,10 @@ const pwaIconSizes = [72, 96, 128, 144, 152, 180, 192, 384, 512] as const;
 
 function hasVapidConfiguration(): boolean {
   return Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+}
+
+function normalizeRole(role: unknown): UserRole {
+  return role === 'admin' || role === 'adult' ? role : 'user';
 }
 
 async function writePwaIcons(buffer: Buffer): Promise<string> {
@@ -127,7 +131,7 @@ router.post('/users', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  const safeRole: 'admin' | 'user' = role === 'admin' ? 'admin' : 'user';
+  const safeRole = normalizeRole(role);
   const db = getDb();
 
   const exists = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
@@ -159,7 +163,7 @@ router.patch('/users/:id', async (req: Request, res: Response): Promise<void> =>
 
   if (displayName         !== undefined) { updates.push('display_name = ?');          vals.push(String(displayName)); }
   if (email               !== undefined) { updates.push('email = ?');                  vals.push((email as string) || null); }
-  if (role                !== undefined) { updates.push('role = ?');                   vals.push(role === 'admin' ? 'admin' : 'user'); }
+  if (role                !== undefined) { updates.push('role = ?');                   vals.push(normalizeRole(role)); }
   if (enabled             !== undefined) { updates.push('enabled = ?');                vals.push(enabled ? 1 : 0); }
   if (twoFaEnabled        !== undefined) { updates.push('two_fa_enabled = ?');         vals.push(twoFaEnabled ? 1 : 0); }
   if (forcePasswordChange !== undefined) { updates.push('force_password_change = ?'); vals.push(forcePasswordChange ? 1 : 0); }
@@ -246,11 +250,13 @@ router.post('/invite', async (req: Request, res: Response): Promise<void> => {
 
 router.get('/reports', (_req: Request, res: Response): void => {
   const reports = getDb().prepare(`
-    SELECT r.id, r.reported_at, r.reviewed, r.action_taken,
+    SELECT r.id, r.message_id, r.reported_at, r.reason, r.reviewed, r.action_taken, r.outcome_message,
            reporter.display_name AS reporter_name,
            reviewer.display_name AS reviewer_name,
            m.text                AS message_text,
            m.image_path,
+           m.view_once,
+           m.is_blurred,
            m.created_at          AS message_at,
            author.display_name   AS author_name
     FROM reports r
@@ -270,10 +276,16 @@ router.patch('/reports/:id', (req: Request, res: Response): void => {
   const report = db.prepare('SELECT * FROM reports WHERE id = ?').get(req.params.id);
   if (!report) { res.sendStatus(404); return; }
 
-  const { actionTaken } = req.body as { actionTaken?: string };
+  const { actionTaken, outcomeMessage } = req.body as { actionTaken?: string; outcomeMessage?: string };
   db.prepare(
-    'UPDATE reports SET reviewed = 1, reviewed_by = ?, reviewed_at = ?, action_taken = ? WHERE id = ?',
-  ).run(req.user!.id, Date.now(), actionTaken ?? 'reviewed', req.params.id);
+    'UPDATE reports SET reviewed = 1, reviewed_by = ?, reviewed_at = ?, action_taken = ?, outcome_message = ? WHERE id = ?',
+  ).run(
+    req.user!.id,
+    Date.now(),
+    actionTaken ?? 'Hidden from chat',
+    String(outcomeMessage ?? '').trim() || null,
+    req.params.id,
+  );
 
   res.sendStatus(204);
 });

@@ -106,10 +106,12 @@ export async function initDb(): Promise<DB> {
       message_id   TEXT    NOT NULL REFERENCES messages(id),
       reported_by  INTEGER NOT NULL REFERENCES users(id),
       reported_at  INTEGER NOT NULL,
+      reason       TEXT,
       reviewed     INTEGER NOT NULL DEFAULT 0,
       reviewed_by  INTEGER REFERENCES users(id),
       reviewed_at  INTEGER,
-      action_taken TEXT
+      action_taken TEXT,
+      outcome_message TEXT
     );
 
     CREATE TABLE IF NOT EXISTS user_preferences (
@@ -158,6 +160,8 @@ export async function initDb(): Promise<DB> {
     `ALTER TABLE user_preferences ADD COLUMN font_size  INTEGER`,
     `ALTER TABLE user_preferences ADD COLUMN font_family TEXT`,
     `ALTER TABLE user_preferences ADD COLUMN push_enabled INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE reports ADD COLUMN reason TEXT`,
+    `ALTER TABLE reports ADD COLUMN outcome_message TEXT`,
   ]) {
     try { db.exec(sql); } catch { /* column already exists – safe to ignore */ }
   }

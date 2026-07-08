@@ -11,12 +11,12 @@ import path                             from 'path';
 import fs                               from 'fs';
 import crypto                           from 'crypto';
 import { getDb, getSetting }            from '../db';
-import { requireAuth }                  from '../lib/auth';
+import { requireAuth, sendMail }        from '../lib/auth';
 import { rateLimiter }                  from '../lib/rateLimiter';
 import { isColourSchemeAvailable, parseAvailableColourSchemes } from '../lib/colourSchemes';
 import { getAppName, getMainHeader }    from '../lib/appName';
 import { FONT_OPTION_IDS, normalizeFontOption } from '../lib/fontOptions';
-import type { DbMessage, ApiPost, DbUserPreferences } from '../types';
+import type { DbMessage, ApiPost, DbUserPreferences, UserRole } from '../types';
 import { version as APP_VERSION }       from '../package.json';
 
 const router      = Router();
@@ -54,6 +54,83 @@ function isPushAvailable(): boolean {
 // In-memory typing state (transient – not persisted)
 const typingUsers = new Map<string, number>(); // displayName → timestamp
 
+function isObserverRole(role: string): boolean {
+  return role === 'admin' || role === 'adult';
+}
+
+interface PostViewer {
+  id: number;
+  role: UserRole;
+}
+
+interface MessageReportState {
+  flagged: boolean;
+  reporterOutcome: string | null;
+  adultStatusText: string | null;
+}
+
+function getMessageReportState(messageId: string, viewer?: PostViewer): MessageReportState {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT reported_by, reviewed, outcome_message
+    FROM reports
+    WHERE message_id = ?
+    ORDER BY reported_at ASC
+  `).all(messageId) as Array<{ reported_by: number; reviewed: 0 | 1; outcome_message: string | null }>;
+
+  const reporterOutcome = viewer
+    ? rows.find(r => r.reported_by === viewer.id && r.reviewed === 1 && r.outcome_message)?.outcome_message ?? null
+    : null;
+  const reviewedWithOutcome = [...rows].reverse()
+    .find(r => r.reviewed === 1 && r.outcome_message)?.outcome_message ?? null;
+
+  return {
+    flagged: rows.length > 0,
+    reporterOutcome,
+    adultStatusText: rows.length > 0 ? reviewedWithOutcome || 'Pending review' : null,
+  };
+}
+
+async function notifyAdminsOfReport(messageId: string, reporterName: string, reason: string): Promise<void> {
+  const db = getDb();
+  const admins = db.prepare(`
+    SELECT email FROM users
+    WHERE role = 'admin' AND enabled = 1 AND email IS NOT NULL AND TRIM(email) != ''
+  `).all() as Array<{ email: string }>;
+  if (admins.length === 0) return;
+
+  const appName = getAppName();
+  const appUrl = process.env.APP_URL ?? 'http://localhost:3333';
+  const subject = 'Message sent for moderation';
+  const text = [
+    `A message has been sent for moderation in ${appName}.`,
+    '',
+    `Reported by: ${reporterName}`,
+    `Message ID: ${messageId}`,
+    `Reason: ${reason || 'No reason supplied.'}`,
+    '',
+    `Review it in the admin panel: ${appUrl}/admin`,
+  ].join('\n');
+  const html = `
+    <p>A message has been sent for moderation in <strong>${appName}</strong>.</p>
+    <p><strong>Reported by:</strong> ${escapeHtmlForEmail(reporterName)}<br>
+    <strong>Message ID:</strong> ${escapeHtmlForEmail(messageId)}<br>
+    <strong>Reason:</strong> ${escapeHtmlForEmail(reason || 'No reason supplied.')}</p>
+    <p><a href="${escapeHtmlForEmail(appUrl)}/admin">Open the admin panel</a></p>
+  `;
+
+  await Promise.allSettled(admins.map(admin => sendMail(admin.email, subject, text, html)));
+}
+
+function escapeHtmlForEmail(value: string): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 // ── Multer configuration ──────────────────────────────────────────────────────
 
 const ALLOWED_MIMES = new Set([
@@ -75,13 +152,18 @@ const upload = multer({
 
 // ── Helper: DB row → API post object ─────────────────────────────────────────
 
-function rowToPost(row: DbMessage, requestingUserId?: number): ApiPost {
+function rowToPost(row: DbMessage, viewer?: PostViewer): ApiPost {
   const db = getDb();
+  const reportState = getMessageReportState(row.id, viewer);
+  const isNormalViewer = viewer?.role === 'user';
+  const isAdultViewer = viewer?.role === 'adult';
+  const hiddenForNormal = reportState.flagged && isNormalViewer;
+  const outcomeText = hiddenForNormal ? reportState.reporterOutcome : null;
 
   const seenBy = (db.prepare(`
     SELECT u.display_name FROM message_views mv
     JOIN users u ON u.id = mv.user_id
-    WHERE mv.message_id = ? AND u.role != 'admin'
+    WHERE mv.message_id = ? AND u.role = 'user'
   `).all(row.id) as Array<{ display_name: string }>).map(r => r.display_name);
 
   const reactionRows = db.prepare(`
@@ -100,29 +182,35 @@ function rowToPost(row: DbMessage, requestingUserId?: number): ApiPost {
   const reactions = [...reactionsMap.entries()].map(([emoji, users]) => ({ emoji, users }));
 
   // For view-once messages, withhold the file path once the requesting user
-  // has already opened it.  Admins always receive the path (no view record is
-  // written for them) so that moderation workflows are not broken.
+  // has already opened it.  Observer roles always receive the path (no view
+  // record is written for them) so moderation workflows are not broken.
   let imagePath = row.image_path ?? null;
-  if (row.view_once === 1 && imagePath && requestingUserId !== undefined) {
+  if (row.view_once === 1 && imagePath && viewer?.role === 'user') {
     const alreadyViewed = db.prepare(
       'SELECT 1 FROM message_views WHERE message_id = ? AND user_id = ?',
-    ).get(row.id, requestingUserId);
+    ).get(row.id, viewer.id);
     if (alreadyViewed) imagePath = null;
   }
+
+  if (hiddenForNormal) imagePath = null;
 
   return {
     id:        row.id,
     user:      row.display_name ?? '',
-    text:      row.text ?? '',
+    text:      outcomeText || (hiddenForNormal ? 'Message flagged' : row.text ?? ''),
     imagePath,
-    viewOnce:  row.view_once  === 1,
-    isBlurred: row.is_blurred === 1,
+    viewOnce:  !hiddenForNormal && row.view_once  === 1,
+    isBlurred: !hiddenForNormal && row.is_blurred === 1,
     createdAt: row.created_at,
     seenBy,
-    replyUser: row.reply_user  ?? null,
-    replyText: row.reply_text  ?? null,
-    replyId:   row.reply_to_id ?? null,
-    reactions,
+    replyUser: hiddenForNormal ? null : row.reply_user  ?? null,
+    replyText: hiddenForNormal ? null : row.reply_text  ?? null,
+    replyId:   hiddenForNormal ? null : row.reply_to_id ?? null,
+    reactions: hiddenForNormal ? [] : reactions,
+    flagged:   reportState.flagged,
+    flagState: outcomeText ? 'outcome' : hiddenForNormal ? 'hidden' : isAdultViewer && reportState.flagged ? 'adult' : 'none',
+    moderationOutcome: outcomeText,
+    flagStatusText: isAdultViewer && reportState.flagged ? reportState.adultStatusText : null,
   };
 }
 
@@ -170,7 +258,7 @@ router.get('/messages', requireAuth, (req: Request, res: Response): void => {
   const db  = getDb();
   const now = Date.now();
 
-  if (req.query.active !== 'false' && req.user!.role !== 'admin') {
+  if (req.query.active !== 'false' && req.user!.role === 'user') {
     db.prepare('UPDATE users SET last_seen = ? WHERE id = ?').run(now, req.user!.id);
   }
 
@@ -197,7 +285,7 @@ router.get('/messages', requireAuth, (req: Request, res: Response): void => {
       `).all(limit) as DbMessage[]).reverse();
 
   const userRows = db.prepare(
-    `SELECT display_name, last_seen FROM users WHERE last_seen IS NOT NULL AND role != 'admin'`,
+    `SELECT display_name, last_seen FROM users WHERE last_seen IS NOT NULL AND role = 'user'`,
   ).all() as Array<{ display_name: string; last_seen: number }>;
 
   const lastSeen: Record<string, number> = {};
@@ -207,8 +295,7 @@ router.get('/messages', requireAuth, (req: Request, res: Response): void => {
   // Pass the requesting user's ID so view-once images are withheld after first
   // view.  Admins receive full imagePaths for moderation; no view record is
   // written for them so requestingUserId stays undefined.
-  const viewingUserId = req.user!.role !== 'admin' ? req.user!.id : undefined;
-  const posts  = rows.map(row => rowToPost(row, viewingUserId));
+  const posts  = rows.map(row => rowToPost(row, { id: req.user!.id, role: req.user!.role }));
 
   res.json({ posts, total: posts.length, typing, lastSeen });
 });
@@ -221,8 +308,8 @@ router.post(
   rateLimiter({ windowMs: 60_000, max: 30, message: 'Sending too fast. Please slow down.' }),
   upload.single('image'),
   async (req: Request, res: Response): Promise<void> => {
-    if (req.user!.role === 'admin') {
-      res.status(403).json({ error: 'Administrators cannot send chat messages' });
+    if (isObserverRole(req.user!.role)) {
+      res.status(403).json({ error: 'Observer accounts cannot send chat messages' });
       return;
     }
 
@@ -306,7 +393,7 @@ router.post(
         SELECT ps.endpoint, ps.p256dh, ps.auth
         FROM push_subscriptions ps
         JOIN users u ON u.id = ps.user_id
-        WHERE ps.user_id != ? AND u.enabled = 1
+        WHERE ps.user_id != ? AND u.enabled = 1 AND u.role = 'user'
       `).all(req.user!.id) as Array<{ endpoint: string; p256dh: string; auth: string }>;
 
       for (const sub of subs) {
@@ -335,6 +422,11 @@ router.delete('/messages/:id', requireAuth, (req: Request, res: Response): void 
   const msg = db.prepare('SELECT * FROM messages WHERE id = ?').get(req.params.id) as DbMessage | undefined;
   if (!msg) { res.sendStatus(404); return; }
 
+  if (req.user!.role === 'adult') {
+    res.sendStatus(403);
+    return;
+  }
+
   if (msg.user_id !== req.user!.id && req.user!.role !== 'admin') {
     res.sendStatus(403);
     return;
@@ -350,19 +442,21 @@ router.delete('/messages/:id', requireAuth, (req: Request, res: Response): void 
 // ── POST /api/messages/:id/view  (view-once) ─────────────────────────────────
 
 router.post('/messages/:id/view', requireAuth, (req: Request, res: Response): void => {
-  if (req.user!.role === 'admin') {
-    res.status(403).json({ error: 'Administrators cannot mark messages as viewed' });
-    return;
-  }
-
   const db  = getDb();
   const msg = db.prepare(
     'SELECT * FROM messages WHERE id = ? AND deleted_at IS NULL',
   ).get(req.params.id) as DbMessage | undefined;
 
   if (!msg) { res.sendStatus(404); return; }
+  if (req.user!.role === 'user') {
+    const flagged = db.prepare('SELECT 1 FROM reports WHERE message_id = ? LIMIT 1').get(msg.id);
+    if (flagged) {
+      res.status(403).json({ error: 'Message has been flagged for moderation' });
+      return;
+    }
+  }
 
-  if (msg.view_once) {
+  if (msg.view_once && !isObserverRole(req.user!.role)) {
     // Enforce true one-time access: once a user has viewed the message the
     // image path is never returned again.
     const alreadyViewed = db.prepare(
@@ -383,13 +477,15 @@ router.post('/messages/:id/view', requireAuth, (req: Request, res: Response): vo
 
 // ── POST /api/messages/:id/report ────────────────────────────────────────────
 
-router.post('/messages/:id/report', requireAuth, (req: Request, res: Response): void => {
+router.post('/messages/:id/report', requireAuth, async (req: Request, res: Response): Promise<void> => {
   if (getSetting('report_enabled') !== '1') {
     res.status(403).json({ error: 'Reporting is not enabled' });
     return;
   }
 
   const db  = getDb();
+  const { reason } = (req.body ?? {}) as { reason?: string };
+  const safeReason = String(reason ?? '').trim().slice(0, 1000);
   const msg = db.prepare(
     'SELECT * FROM messages WHERE id = ? AND deleted_at IS NULL',
   ).get(req.params.id) as DbMessage | undefined;
@@ -406,8 +502,12 @@ router.post('/messages/:id/report', requireAuth, (req: Request, res: Response): 
 
   if (existing) { res.status(409).json({ error: 'Already reported' }); return; }
 
-  db.prepare('INSERT INTO reports (message_id, reported_by, reported_at) VALUES (?, ?, ?)')
-    .run(msg.id, req.user!.id, Date.now());
+  db.prepare('INSERT INTO reports (message_id, reported_by, reported_at, reason) VALUES (?, ?, ?, ?)')
+    .run(msg.id, req.user!.id, Date.now(), safeReason || null);
+
+  notifyAdminsOfReport(msg.id, req.user!.display_name, safeReason).catch(err => {
+    console.error('[reports] admin notification failed:', (err as Error).message);
+  });
 
   res.json({ status: 'reported' });
 });
@@ -415,7 +515,7 @@ router.post('/messages/:id/report', requireAuth, (req: Request, res: Response): 
 // ── POST /api/typing ──────────────────────────────────────────────────────────
 
 router.post('/typing', requireAuth, (req: Request, res: Response): void => {
-  if (req.user!.role === 'admin') {
+  if (isObserverRole(req.user!.role)) {
     res.sendStatus(204);
     return;
   }
@@ -510,6 +610,11 @@ router.post('/preferences', requireAuth, (req: Request, res: Response): void => 
 const ALLOWED_REACTION_EMOJIS = new Set(['👍', '❤️', '😂', '😮', '😢', '👏', '🔥', '😡']);
 
 router.post('/messages/:id/react', requireAuth, (req: Request, res: Response): void => {
+  if (isObserverRole(req.user!.role)) {
+    res.status(403).json({ error: 'Observer accounts cannot react to messages' });
+    return;
+  }
+
   const { emoji } = req.body as { emoji?: string };
 
   if (!emoji || typeof emoji !== 'string') {
@@ -539,6 +644,11 @@ router.post('/messages/:id/react', requireAuth, (req: Request, res: Response): v
 // ── DELETE /api/messages/:id/react ───────────────────────────────────────────
 
 router.delete('/messages/:id/react', requireAuth, (req: Request, res: Response): void => {
+  if (isObserverRole(req.user!.role)) {
+    res.status(403).json({ error: 'Observer accounts cannot react to messages' });
+    return;
+  }
+
   const { emoji } = req.body as { emoji?: string };
 
   if (!emoji || typeof emoji !== 'string' || !ALLOWED_REACTION_EMOJIS.has(emoji)) {
@@ -573,6 +683,11 @@ router.get('/push/vapid-public-key', (_req: Request, res: Response): void => {
 // ── POST /api/push/subscribe ──────────────────────────────────────────────────
 
 router.post('/push/subscribe', requireAuth, (req: Request, res: Response): void => {
+  if (isObserverRole(req.user!.role)) {
+    res.status(403).json({ error: 'Observer accounts cannot subscribe to push notifications' });
+    return;
+  }
+
   if (!isPushConfigured()) {
     res.status(503).json({ error: 'Push notifications not configured on this server' });
     return;

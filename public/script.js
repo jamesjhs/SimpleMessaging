@@ -2,7 +2,7 @@
 
 // ── State ────────────────────────────────────────────────────────────────────
 let currentUser    = null;   // display name of logged-in user
-let currentRole    = null;   // 'admin' | 'user'
+let currentRole    = null;   // 'admin' | 'adult' | 'user'
 let appConfig      = {};     // server-supplied config
 let enterToSend    = false;
 let pushPreferenceEnabled = false;
@@ -15,6 +15,40 @@ let replyingTo     = null;   // { user, text, id }
 let isPageVisible  = true;
 let unreadCount    = 0;
 let originalTitle  = document.title;
+let reportingMessageId = null;
+
+function isObserverRole(role = currentRole) {
+  return role === 'admin' || role === 'adult';
+}
+
+function isAdultObserver() {
+  return currentRole === 'adult';
+}
+
+function applyDocumentTitle() {
+  const appName = getConfiguredAppName();
+  originalTitle = isAdultObserver() ? `${appName} View Only` : appName;
+  document.title = unreadCount > 0 ? `(${unreadCount}) ${originalTitle}` : originalTitle;
+}
+
+function applyRoleUi() {
+  const postForm = document.getElementById('postForm');
+  const enterToSendRow = document.getElementById('enter-to-send-row');
+  const adultFooter = document.getElementById('adult-view-footer');
+  if (postForm) postForm.style.display = isAdultObserver() ? 'none' : 'flex';
+  if (enterToSendRow) enterToSendRow.style.display = isAdultObserver() ? 'none' : 'flex';
+  if (adultFooter) adultFooter.style.display = isAdultObserver() ? 'flex' : 'none';
+  document.body.classList.toggle('read-only-chat', isAdultObserver());
+  if (isAdultObserver()) {
+    cancelReply();
+    clearPreview();
+    enterToSend = false;
+    if (typingTimeout) clearTimeout(typingTimeout);
+    typingTimeout = null;
+    isTyping = false;
+  }
+  applyDocumentTitle();
+}
 
 // Pending upload bubbles: pendingId -> { bubbleEl, formData, xhr, cancelled }
 const pendingMessages = new Map();
@@ -128,14 +162,15 @@ function getConfiguredAppName() {
 
 function applyAppConfigChrome() {
   const appName = getConfiguredAppName();
-  document.title = appName;
-  originalTitle  = appName;
+  applyDocumentTitle();
 
   const headerTitle = document.getElementById('header-title');
   if (headerTitle) headerTitle.textContent = (appConfig.mainHeader || appName).trim() || appName;
 
   const settingsVersion = document.getElementById('settings-version');
   if (settingsVersion && appConfig.appVersion) settingsVersion.textContent = `Version ${appConfig.appVersion}`;
+  const adultFooterVersion = document.getElementById('adult-footer-version');
+  if (adultFooterVersion && appConfig.appVersion) adultFooterVersion.textContent = `Version ${appConfig.appVersion}`;
 
   if (appConfig.chatIconUrl) {
     const headerLogo = document.getElementById('header-logo');
@@ -526,6 +561,7 @@ async function submitNewPassword() {
 async function logout() {
   currentUser  = null;
   currentRole  = null;
+  applyRoleUi();
   lastPostId   = null;
   unreadCount  = 0;
   document.title = originalTitle;
@@ -568,6 +604,7 @@ async function loadMe() {
   const data = await res.json();
   currentUser = data.user;
   currentRole = data.role;
+  applyRoleUi();
 
   // Show admin link in settings
   const adminBtn = document.getElementById('admin-panel-btn');
@@ -648,6 +685,11 @@ async function loadMessages() {
         }
         container.appendChild(div);
       } else {
+        if (existing.dataset.flagstate !== (p.flagState || 'none')) {
+          const replacement = renderMessage(p, otherLastSeen, currentUser, appConfig);
+          existing.replaceWith(replacement);
+          return;
+        }
         // Update read receipt on existing bubble
         if (p.user === currentUser) {
           const isSeen    = otherLastSeen > 0 && otherLastSeen >= p.createdAt;
@@ -714,6 +756,7 @@ async function loadMessages() {
 function renderMessage(p, otherLastSeen, me, cfg) {
   const div     = document.createElement('div');
   const isMine  = p.user === me;
+  const isReadOnly = isAdultObserver();
 
   div.className        = `post ${isMine ? 'mine' : 'theirs'}`;
   div.dataset.timestamp= p.createdAt;
@@ -721,10 +764,14 @@ function renderMessage(p, otherLastSeen, me, cfg) {
   div.dataset.user     = p.user;
   div.dataset.text     = p.text || '';
   div.dataset.imagepath= p.imagePath || '';
+  div.dataset.flagstate= p.flagState || 'none';
+  if (p.flagState === 'adult') div.classList.add('flagged-adult');
+  if (p.flagState === 'hidden') div.classList.add('flagged-hidden');
+  if (p.flagState === 'outcome') div.classList.add('flagged-outcome');
 
   // Read receipt
   let statusHtml = '';
-  if (isMine) {
+  if (isMine && !isObserverRole() && p.flagState !== 'hidden' && p.flagState !== 'outcome') {
     const isSeen = otherLastSeen > 0 && otherLastSeen >= p.createdAt;
     statusHtml   = `<span class="read-status ${isSeen ? 'seen' : ''}">${
       isSeen ? (cfg.readStatusSeen || '✓✓') : (cfg.readStatusUnread || '✓')
@@ -751,7 +798,7 @@ function renderMessage(p, otherLastSeen, me, cfg) {
       if (isMine) {
         imageHtml = `<div class="view-once sent">👁️ View Once<div class="view-once-status">${recipientSeen ? 'Opened' : 'Delivered'}</div></div>`;
       } else {
-        const iSaw = p.seenBy && p.seenBy.includes(me);
+        const iSaw = !isAdultObserver() && p.seenBy && p.seenBy.includes(me);
         imageHtml  = iSaw
           ? `<div class="view-once dead">👁️ ${isVideo ? 'Video' : 'Photo'} Viewed</div>`
           : `<div id="view-once-${p.id}" class="view-once active" onclick="openViewOnce('${p.id}')">👁️ View Once ${isVideo ? 'Video' : 'Photo'}</div>`;
@@ -769,6 +816,9 @@ function renderMessage(p, otherLastSeen, me, cfg) {
   }
 
   div.innerHTML = `
+    ${p.flagState === 'adult' ? '<span class="flagged-label">FLAGGED</span>' : ''}
+    ${p.flagState === 'adult' && p.flagStatusText ? `<span class="flagged-status">${escapeHtml(p.flagStatusText)}</span>` : ''}
+    ${p.flagState === 'outcome' ? '<span class="moderation-outcome-label">MODERATION OUTCOME</span>' : ''}
     <span class="post-header">[${new Date(p.createdAt).toLocaleTimeString()}] <b>${escapeHtml(p.user)}</b></span>
     ${quoteHtml}
     <div class="message-text">${linkify(p.text)}</div>
@@ -779,7 +829,9 @@ function renderMessage(p, otherLastSeen, me, cfg) {
   attachMediaUnavailableFallback(div);
 
   // Delete button (own messages)
-  if (isMine && cfg.enableDeleteButton !== false) {
+  const isModerationPlaceholder = p.flagState === 'hidden' || p.flagState === 'outcome';
+
+  if (isMine && cfg.enableDeleteButton !== false && !isReadOnly && !isModerationPlaceholder) {
     const btn   = document.createElement('button');
     btn.className   = 'delete-btn';
     btn.textContent = cfg.deleteButton || '✗';
@@ -787,7 +839,7 @@ function renderMessage(p, otherLastSeen, me, cfg) {
   }
 
   // Report button (received messages, if enabled)
-  if (!isMine && cfg.enableReport) {
+  if (!isMine && cfg.enableReport && !p.flagged) {
     const btn   = document.createElement('button');
     btn.className   = 'report-btn';
     btn.textContent = '!';
@@ -795,11 +847,12 @@ function renderMessage(p, otherLastSeen, me, cfg) {
     div.appendChild(btn);
   }
 
-  // Reply button
-  const rBtn       = document.createElement('button');
-  rBtn.className   = 'reply-btn';
-  rBtn.textContent = cfg.replyButton || '↩';
-  div.appendChild(rBtn);
+  if (!isReadOnly && !isModerationPlaceholder) {
+    const rBtn       = document.createElement('button');
+    rBtn.className   = 'reply-btn';
+    rBtn.textContent = cfg.replyButton || '↩';
+    div.appendChild(rBtn);
+  }
 
   updateReactionStrip(div, p.reactions);
 
@@ -827,7 +880,7 @@ function updateReactionStrip(msgEl, reactions) {
   if (!reactions || reactions.length === 0) { strip.innerHTML = ''; return; }
   strip.innerHTML = reactions.map(r => {
     const count   = r.users.length;
-    const isMine  = currentUser && r.users.includes(currentUser);
+    const isMine  = !isObserverRole() && currentUser && r.users.includes(currentUser);
     const safeEmoji = escapeHtml(r.emoji);
     const label   = count > 1 ? `${safeEmoji} ${count}` : safeEmoji;
     return `<span class="reaction-chip${isMine ? ' mine' : ''}" data-emoji="${safeEmoji}">${label}</span>`;
@@ -842,7 +895,7 @@ function updateViewOnceEl(existing, p) {
     const st = voEl.querySelector('.view-once-status');
     if (st) st.textContent = recipientSeen ? 'Opened' : 'Delivered';
   } else {
-    const iSaw = p.seenBy && p.seenBy.includes(currentUser);
+    const iSaw = !isAdultObserver() && p.seenBy && p.seenBy.includes(currentUser);
     if (iSaw && voEl.classList.contains('active')) {
       const isVideo = p.imagePath && /\.(mp4|webm)$/i.test(p.imagePath);
       voEl.className = 'view-once dead';
@@ -934,6 +987,7 @@ function isVideoFile(file) {
 
 document.getElementById('postForm').addEventListener('submit', async e => {
   e.preventDefault();
+  if (isObserverRole()) return;
 
   let fileToSend  = imageInput.files[0] || cameraInput.files[0] || videoInput.files[0];
   const text      = textInput.value.trim();
@@ -1191,20 +1245,13 @@ postsContainer.addEventListener('click', async e => {
     }
   } else if (reportBtn && postDiv) {
     e.stopPropagation();
-    if (confirm('Report this message to the administrator?')) {
-      const id  = postDiv.dataset.id;
-      const res = await apiFetch(`/api/messages/${id}/report`, { method: 'POST' });
-      if (res.ok) {
-        alert('Message reported.');
-      } else {
-        const data = await res.json().catch(() => ({}));
-        alert(data.error || 'Could not report message.');
-      }
-    }
+    showReportDialog(postDiv.dataset.id);
   } else if (replyBtn && postDiv) {
+    if (isAdultObserver()) return;
     e.stopPropagation();
     setReply(postDiv.dataset.user, postDiv.dataset.text || (postDiv.dataset.imagepath ? 'Photo' : ''), postDiv.dataset.id);
   } else if (chipEl && postDiv) {
+    if (isObserverRole()) return;
     e.stopPropagation();
     const emoji = chipEl.dataset.emoji;
     const msgId = postDiv.dataset.id;
@@ -1233,6 +1280,7 @@ postsContainer.addEventListener('click', async e => {
 let swipeTarget = null, startX = 0, currentX = 0, hapticTriggered = false;
 
 postsContainer.addEventListener('touchstart', e => {
+  if (isObserverRole()) return;
   const postDiv = e.target.closest('.post');
   if (!postDiv || postDiv.classList.contains('pending-msg')) return;
   swipeTarget = postDiv;
@@ -1319,6 +1367,7 @@ postsContainer.addEventListener('touchcancel', () => {
 // ── Long-press to open reaction picker (mouse / desktop) ─────────────────────
 
 postsContainer.addEventListener('mousedown', e => {
+  if (isObserverRole()) return;
   if (e.button !== 0) return;
   const postDiv = e.target.closest('.post');
   if (!postDiv || postDiv.classList.contains('pending-msg')) return;
@@ -1384,6 +1433,7 @@ cameraInput.addEventListener('change', handleImageSelect);
 videoInput.addEventListener('change',  handleImageSelect);
 
 function handleInput() {
+  if (isObserverRole()) return;
   textInput.style.height    = 'auto';
   const newH                = Math.min(textInput.scrollHeight, 150);
   textInput.style.height    = newH + 'px';
@@ -1470,6 +1520,7 @@ function showAttachments(e) {
 }
 
 async function sendTypingStatus(status) {
+  if (isObserverRole()) return;
   await apiFetch('/api/typing', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1508,12 +1559,14 @@ function closeImagePopup() {
 
 async function openViewOnce(id) {
   const btn = document.getElementById(`view-once-${id}`);
-  if (btn) btn.onclick = null;
+  if (btn && !isAdultObserver()) btn.onclick = null;
   const res  = await apiFetch(`/api/messages/${id}/view`, { method: 'POST' });
   if (res.ok) {
     const data = await res.json();
     showImagePopup(data.imagePath);
     loadMessages();
+  } else if (btn && isAdultObserver()) {
+    btn.onclick = () => openViewOnce(id);
   }
 }
 
@@ -1561,6 +1614,7 @@ document.addEventListener('click', e => {
 // ── Reaction picker ───────────────────────────────────────────────────────────
 
 function showReactionPicker(postEl, clientX, clientY) {
+  if (isObserverRole()) return;
   const picker = document.getElementById('reaction-picker');
   if (!picker) return;
 
@@ -1583,6 +1637,7 @@ function showReactionPicker(postEl, clientX, clientY) {
 }
 
 document.getElementById('reaction-picker').addEventListener('click', async e => {
+  if (isObserverRole()) return;
   const emojiEl = e.target.closest('.reaction-picker-emoji');
   if (!emojiEl || !reactionPickerTarget) return;
 
@@ -1651,6 +1706,7 @@ function applyFontSize(size, save = true) {
 }
 
 function toggleEnterToSend(enabled) {
+  if (isAdultObserver()) return;
   enterToSend = enabled;
   apiFetch('/api/preferences', {
     method:  'POST',
@@ -1680,6 +1736,68 @@ function showChangePasswordDialog() {
 function hideChangePasswordDialog() {
   document.getElementById('change-password-overlay').style.display = 'none';
 }
+
+function showPrivacyPolicy() {
+  if (!isAdultObserver()) return;
+  const overlay = document.getElementById('privacy-policy-overlay');
+  if (overlay) overlay.style.display = 'flex';
+}
+
+function hidePrivacyPolicy() {
+  const overlay = document.getElementById('privacy-policy-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function showReportDialog(messageId) {
+  reportingMessageId = messageId;
+  const overlay = document.getElementById('report-message-overlay');
+  const input = document.getElementById('report-reason-input');
+  const error = document.getElementById('report-message-error');
+  if (input) input.value = '';
+  if (error) error.textContent = '';
+  if (overlay) overlay.style.display = 'flex';
+  setTimeout(() => input?.focus(), 0);
+}
+
+function hideReportDialog() {
+  reportingMessageId = null;
+  const overlay = document.getElementById('report-message-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+async function submitReportDialog() {
+  if (!reportingMessageId) return;
+  const input = document.getElementById('report-reason-input');
+  const error = document.getElementById('report-message-error');
+  const reason = input?.value.trim() || '';
+
+  const res = await apiFetch(`/api/messages/${reportingMessageId}/report`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ reason }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (error) error.textContent = data.error || 'Could not send this report.';
+    return;
+  }
+
+  hideReportDialog();
+  await loadMessages();
+}
+
+document.getElementById('privacy-policy-overlay')?.addEventListener('click', e => {
+  if (e.target === e.currentTarget) hidePrivacyPolicy();
+});
+
+document.getElementById('report-message-overlay')?.addEventListener('click', e => {
+  if (e.target === e.currentTarget) hideReportDialog();
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') hidePrivacyPolicy();
+  if (e.key === 'Escape') hideReportDialog();
+});
 
 async function submitChangePassword() {
   const current  = document.getElementById('cp-current').value;
@@ -2016,6 +2134,7 @@ if ('serviceWorker' in navigator) {
 // ── Push notifications ────────────────────────────────────────────────────────
 
 async function savePushPreference(enabled) {
+  if (isObserverRole()) return;
   pushPreferenceEnabled = enabled;
   await apiFetch('/api/preferences', {
     method:  'POST',
@@ -2025,6 +2144,7 @@ async function savePushPreference(enabled) {
 }
 
 async function syncPushToggleState(statusMessage = '') {
+  if (isObserverRole()) return;
   const toggle   = document.getElementById('push-toggle');
   const statusEl = document.getElementById('push-status-msg');
   try {
@@ -2053,9 +2173,13 @@ async function syncPushToggleState(statusMessage = '') {
 }
 
 async function initPushNotifications() {
+  const row = document.getElementById('push-notification-row');
+  if (isObserverRole()) {
+    if (row) row.style.display = 'none';
+    return;
+  }
   updatePwaInstallUi();
 
-  const row = document.getElementById('push-notification-row');
   if (!row) return;
 
   if (!appConfig.pwaEnabled ||
@@ -2081,6 +2205,7 @@ async function initPushNotifications() {
 }
 
 async function togglePushNotifications(enable) {
+  if (isObserverRole()) return;
   const toggle  = document.getElementById('push-toggle');
   const statusEl = document.getElementById('push-status-msg');
   if (statusEl) { statusEl.style.display = 'none'; }
@@ -2103,6 +2228,7 @@ async function togglePushNotifications(enable) {
 }
 
 async function subscribeToPush(options = {}) {
+  if (isObserverRole()) return false;
   const { requestPermission = true, silent = false } = options;
   const statusEl = document.getElementById('push-status-msg');
 
