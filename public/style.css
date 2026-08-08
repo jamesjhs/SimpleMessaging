@@ -419,6 +419,8 @@ textarea#text {
   z-index: 100;
   min-width: 200px;
   box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
 }
 #colour-picker-title { font-weight: bold; margin-bottom: 8px; font-size: 0.95rem; }
 .colour-scheme-btn {
