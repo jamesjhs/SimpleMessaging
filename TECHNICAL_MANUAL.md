@@ -1,6 +1,6 @@
 # TLS — Technical Manual
 
-**Version 1.2.4**
+**Version 1.2.5**
 *TLS Secure Messaging — encrypted two-person chat*
 
 ---
@@ -477,7 +477,7 @@ The service worker (`public/sw.js`) implements:
 - **Activate**: deletes all caches whose name does not match the current `CACHE_NAME`, ensuring stale assets from previous versions are evicted.
 - **Fetch**: network-first for all requests, falling back to cache for shell assets. API calls, uploads, and admin routes bypass the cache entirely.
 
-**Automatic cache busting on deploy**: The server reads `sw.js` at startup and replaces the literal string `tls-__APP_VERSION__` with the actual package version (e.g. `tls-1.2.4`). The browser then sees a changed SW script, triggering an update cycle. The client-side `updatefound` handler reloads the page automatically once the new SW is installed.
+**Automatic cache busting on deploy**: The server reads `sw.js` at startup and replaces the literal string `tls-__APP_VERSION__` with the actual package version (e.g. `tls-1.2.5`). The browser then sees a changed SW script, triggering an update cycle. The client-side `updatefound` handler reloads the page automatically once the new SW is installed.
 
 ### Install + Push Onboarding
 
@@ -655,7 +655,7 @@ When behind a proxy, set `TRUST_PROXY=1` (or another valid Express trust-proxy v
 
 ```bash
 curl https://chat.example.com/readyz
-# {"ok":true,"service":"Messaging","version":"1.2.4","timestamp":"2026-05-04T..."}
+# {"ok":true,"service":"Messaging","version":"1.2.5","timestamp":"2026-05-04T..."}
 ```
 
 ### Data Backup

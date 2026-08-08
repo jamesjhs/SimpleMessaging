@@ -1,6 +1,6 @@
 # TLS – Secure Messaging
 
-Version 1.2.4
+Version 1.2.5
 
 A self-hosted, end-to-end encrypted two-person chat application built with **Node.js**, **TypeScript**, **Express 5**, and **SQLCipher** (via `better-sqlite3-multiple-ciphers`).
 
