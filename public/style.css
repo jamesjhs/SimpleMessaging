@@ -12,7 +12,7 @@
 
 body {
   background-color: var(--color-bg);
-  touch-action: auto;
+  touch-action: pan-x pan-y;
   color: #ffffff;
   font-family: var(--app-font-family);
   max-width: 800px;
@@ -363,6 +363,7 @@ textarea#text {
   z-index: 200;
   align-items: center;
   justify-content: center;
+  touch-action: pinch-zoom;
 }
 #imageOverlay img,
 #imageOverlay video { box-shadow: 0 4px 24px rgba(0,0,0,0.8); }
