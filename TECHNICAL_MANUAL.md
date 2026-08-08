@@ -481,7 +481,7 @@ The service worker (`public/sw.js`) implements:
 
 ### Install + Push Onboarding
 
-- The page links to `/manifest.json`, so browsers can offer a real install flow when `pwa_enabled = '1'`.
+- The page links to `/manifest.json` with `crossorigin="use-credentials"`, so browsers can offer a real install flow when `pwa_enabled = '1'` even when manifest access is gated by credentialed edge auth (for example, Cloudflare Access).
 - Users are prompted to install the app first; the push toggle is only shown from the installed PWA context (`display-mode: standalone` / home-screen install).
 - Push can only be enabled globally when the admin has both turned on the PWA and configured `VAPID_PUBLIC_KEY` plus `VAPID_PRIVATE_KEY`.
 - If the admin disables the PWA or push notifications, stored browser subscriptions are cleared so the server stops dispatching notifications immediately.
