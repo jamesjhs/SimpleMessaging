@@ -53,6 +53,16 @@ function applyRoleUi() {
 // Pending upload bubbles: pendingId -> { bubbleEl, formData, xhr, cancelled }
 const pendingMessages = new Map();
 let activePendingId   = null;
+let restoredDraftFile = null;
+let isRestoringDraft  = false;
+let draftSaveTimer    = null;
+let currentDraftId    = null;
+
+const DRAFT_DB_NAME      = 'tls-message-drafts';
+const DRAFT_DB_VERSION   = 1;
+const DRAFT_STORE_NAME   = 'drafts';
+const CURRENT_DRAFT_KEY  = 'current';
+const DRAFT_MAX_AGE_MS   = 24 * 60 * 60 * 1000;
 
 // OTP / login state
 let otpTempToken          = null;
@@ -985,17 +995,211 @@ function isVideoFile(file) {
   return mime.startsWith('video/') || VIDEO_FILE_EXT_RE.test(file.name || '');
 }
 
+function openDraftDb() {
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) {
+      reject(new Error('IndexedDB is not available'));
+      return;
+    }
+    const req = indexedDB.open(DRAFT_DB_NAME, DRAFT_DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(DRAFT_STORE_NAME)) db.createObjectStore(DRAFT_STORE_NAME);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error('Could not open draft storage'));
+  });
+}
+
+async function withDraftStore(mode, callback) {
+  let db = null;
+  try {
+    db = await openDraftDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(DRAFT_STORE_NAME, mode);
+      const store = tx.objectStore(DRAFT_STORE_NAME);
+      let settled = false;
+      const finish = value => {
+        if (!settled) {
+          settled = true;
+          resolve(value);
+        }
+      };
+      tx.oncomplete = () => finish();
+      tx.onerror = () => reject(tx.error || new Error('Draft storage transaction failed'));
+      tx.onabort = () => reject(tx.error || new Error('Draft storage transaction aborted'));
+      callback(store, finish, reject);
+    });
+  } finally {
+    if (db) db.close();
+  }
+}
+
+async function getSavedDraft() {
+  return withDraftStore('readonly', (store, resolve, reject) => {
+    const req = store.get(CURRENT_DRAFT_KEY);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error || new Error('Could not read draft'));
+  }).catch(err => {
+    console.warn('[draft] read failed:', err.message);
+    return null;
+  });
+}
+
+async function saveDraft(draft) {
+  await withDraftStore('readwrite', (store, resolve, reject) => {
+    const req = store.put(draft, CURRENT_DRAFT_KEY);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error || new Error('Could not save draft'));
+  }).catch(err => console.warn('[draft] save failed:', err.message));
+}
+
+async function deleteSavedDraft(expectedDraftId = null) {
+  restoredDraftFile = null;
+  if (expectedDraftId) {
+    const draft = await getSavedDraft();
+    if (draft?.draftId && draft.draftId !== expectedDraftId) return;
+  }
+  if (!expectedDraftId || currentDraftId === expectedDraftId) currentDraftId = null;
+  await withDraftStore('readwrite', (store, resolve, reject) => {
+    const req = store.delete(CURRENT_DRAFT_KEY);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error || new Error('Could not delete draft'));
+  }).catch(err => console.warn('[draft] delete failed:', err.message));
+}
+
+function getSelectedMediaFile() {
+  return imageInput.files[0] || cameraInput.files[0] || videoInput.files[0] || restoredDraftFile;
+}
+
+function getSelectedMediaSourceId() {
+  if (imageInput.files.length > 0) return 'imageInput';
+  if (cameraInput.files.length > 0) return 'cameraInput';
+  if (videoInput.files.length > 0) return 'videoInput';
+  return restoredDraftFile ? 'imageInput' : null;
+}
+
+function buildCurrentDraft(file = getSelectedMediaFile()) {
+  if (!file) return null;
+  if (!currentDraftId) currentDraftId = crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return {
+    draftId: currentDraftId,
+    savedAt: Date.now(),
+    text: textInput.value,
+    viewOnce: document.getElementById('viewOnce').checked,
+    isBlurred: document.getElementById('blurInput').checked,
+    replyData: replyingTo ? { ...replyingTo } : null,
+    sourceInputId: getSelectedMediaSourceId(),
+    file,
+  };
+}
+
+function persistCurrentDraft() {
+  if (isRestoringDraft) return;
+  const draft = buildCurrentDraft();
+  if (!draft) return;
+  saveDraft(draft);
+}
+
+function scheduleDraftSave() {
+  if (draftSaveTimer) clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(() => {
+    draftSaveTimer = null;
+    persistCurrentDraft();
+  }, 250);
+}
+
+function clearOtherMediaInputs(activeInput) {
+  [imageInput, cameraInput, videoInput].forEach(input => {
+    if (input !== activeInput) input.value = '';
+  });
+  restoredDraftFile = null;
+}
+
+function assignFileToInput(input, file) {
+  try {
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    input.files = dt.files;
+    restoredDraftFile = null;
+    return true;
+  } catch (err) {
+    console.warn('[draft] could not restore file input:', err.message);
+    restoredDraftFile = file;
+    return false;
+  }
+}
+
+function updateComposerLayoutForText() {
+  textInput.style.height    = 'auto';
+  const newH                = Math.min(textInput.scrollHeight, 150);
+  textInput.style.height    = newH + 'px';
+  textInput.style.overflowY = textInput.scrollHeight > 150 ? 'scroll' : 'hidden';
+
+  const mediaOpts = document.getElementById('media-options');
+  const plusBtn   = document.getElementById('plus-btn');
+  const hasText   = textInput.value.trim().length > 0;
+  if (hasText) {
+    if (mediaOpts.dataset.manual !== 'true') {
+      mediaOpts.style.display = 'none';
+      plusBtn.style.display   = 'block';
+    }
+  } else {
+    mediaOpts.style.display        = 'flex';
+    plusBtn.style.display          = 'none';
+    mediaOpts.dataset.manual       = 'false';
+  }
+}
+
+async function restoreSavedDraft() {
+  const draft = await getSavedDraft();
+  if (!draft?.file) return;
+  if (!draft.savedAt || Date.now() - draft.savedAt > DRAFT_MAX_AGE_MS) {
+    await deleteSavedDraft();
+    return;
+  }
+
+  isRestoringDraft = true;
+  try {
+    currentDraftId = draft.draftId || null;
+    const sourceInput = document.getElementById(draft.sourceInputId || 'imageInput') || imageInput;
+    imageInput.value = '';
+    cameraInput.value = '';
+    videoInput.value  = '';
+    assignFileToInput(sourceInput, draft.file);
+    textInput.value = draft.text || '';
+    document.getElementById('viewOnce').checked  = !!draft.viewOnce;
+    document.getElementById('blurInput').checked = !!draft.isBlurred;
+    if (draft.replyData?.user || draft.replyData?.text) {
+      replyingTo = { ...draft.replyData };
+      document.getElementById('reply-info').textContent = `Replying to ${replyingTo.user}`;
+      document.getElementById('reply-text-preview').textContent = replyingTo.text;
+      replyContainer.style.display = 'block';
+    } else {
+      replyingTo = null;
+      replyContainer.style.display = 'none';
+    }
+    renderMediaPreview(draft.file);
+    updateComposerLayoutForText();
+  } finally {
+    isRestoringDraft = false;
+  }
+}
+
 document.getElementById('postForm').addEventListener('submit', async e => {
   e.preventDefault();
   if (isObserverRole()) return;
 
-  let fileToSend  = imageInput.files[0] || cameraInput.files[0] || videoInput.files[0];
+  let fileToSend  = getSelectedMediaFile();
   const text      = textInput.value.trim();
   const viewOnce  = document.getElementById('viewOnce').checked;
   const isBlurred = document.getElementById('blurInput').checked;
   const replyData = replyingTo ? { ...replyingTo } : null;
   const submittedAt = Date.now();
   const pendingId   = 'p-' + (crypto.randomUUID ? crypto.randomUUID() : `${submittedAt}-${Math.random().toString(36).slice(2)}`);
+  const submittedDraftId = currentDraftId;
 
   const bubbleEl = createPendingBubble(pendingId, text, fileToSend, replyData);
   pendingMessages.set(pendingId, { bubbleEl, formData: null, xhr: null, cancelled: false });
@@ -1004,7 +1208,7 @@ document.getElementById('postForm').addEventListener('submit', async e => {
   textInput.value = '';
   textInput.style.height = 'auto';
   cancelReply();
-  clearPreview();
+  clearPreview({ deleteDraft: false });
   document.getElementById('media-options').style.display = 'flex';
   document.getElementById('media-options').dataset.manual = 'false';
   document.getElementById('plus-btn').style.display = 'none';
@@ -1189,6 +1393,7 @@ function startPendingUpload(pendingId) {
   xhr.onload = async () => {
     if (xhr.status === 201) {
       if (navigator.vibrate) navigator.vibrate([20, 30, 20]);
+      await deleteSavedDraft(submittedDraftId);
       removePendingBubble(pendingId);
       await loadMessages();
       scrollToBottom(true);
@@ -1410,12 +1615,14 @@ function setReply(username, text, id) {
   document.getElementById('reply-info').textContent        = `Replying to ${username}`;
   document.getElementById('reply-text-preview').textContent = text;
   replyContainer.style.display = 'block';
+  scheduleDraftSave();
   textInput.focus();
 }
 
 function cancelReply() {
   replyingTo = null;
   replyContainer.style.display = 'none';
+  scheduleDraftSave();
 }
 
 // ── Input & preview ───────────────────────────────────────────────────────────
@@ -1431,15 +1638,14 @@ textInput.addEventListener('keydown', e => {
 imageInput.addEventListener('change',  handleImageSelect);
 cameraInput.addEventListener('change', handleImageSelect);
 videoInput.addEventListener('change',  handleImageSelect);
+document.getElementById('viewOnce').addEventListener('change', scheduleDraftSave);
+document.getElementById('blurInput').addEventListener('change', scheduleDraftSave);
 
 function handleInput() {
   if (isObserverRole()) return;
-  textInput.style.height    = 'auto';
-  const newH                = Math.min(textInput.scrollHeight, 150);
-  textInput.style.height    = newH + 'px';
-  textInput.style.overflowY = textInput.scrollHeight > 150 ? 'scroll' : 'hidden';
-
+  updateComposerLayoutForText();
   updateButtonState();
+  scheduleDraftSave();
   sendTypingStatus(true);
   clearTimeout(typingTimeout);
   typingTimeout = setTimeout(() => {
@@ -1447,24 +1653,20 @@ function handleInput() {
     sendTypingStatus(false);
   }, 4000);
 
-  const mediaOpts = document.getElementById('media-options');
-  const plusBtn   = document.getElementById('plus-btn');
-  const hasText   = textInput.value.trim().length > 0;
-  if (hasText) {
-    if (mediaOpts.dataset.manual !== 'true') {
-      mediaOpts.style.display = 'none';
-      plusBtn.style.display   = 'block';
-    }
-  } else {
-    mediaOpts.style.display        = 'flex';
-    plusBtn.style.display          = 'none';
-    mediaOpts.dataset.manual       = 'false';
-  }
 }
 
 function handleImageSelect(e) {
   const file = e.target.files[0];
   if (!file) return;
+  currentDraftId = crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  clearOtherMediaInputs(e.target);
+  renderMediaPreview(file);
+  persistCurrentDraft();
+}
+
+function renderMediaPreview(file) {
   if (isVideoFile(file)) {
     previewImg.style.display       = 'none';
     previewVideoText.style.display = 'block';
@@ -1481,10 +1683,12 @@ function handleImageSelect(e) {
   updateButtonState();
 }
 
-function clearPreview() {
+function clearPreview(options = {}) {
+  const { deleteDraft = true } = options;
   imageInput.value = '';
   cameraInput.value = '';
   videoInput.value  = '';
+  restoredDraftFile = null;
   document.getElementById('viewOnce').checked  = false;
   document.getElementById('blurInput').checked = false;
   if (previewImg.src.startsWith('blob:')) URL.revokeObjectURL(previewImg.src);
@@ -1495,12 +1699,13 @@ function clearPreview() {
   previewVideoText.innerText     = '[ Video ]';
   document.getElementById('upload-progress-container').style.display = 'none';
   document.getElementById('upload-progress-bar').style.width = '0%';
+  if (deleteDraft) deleteSavedDraft();
   updateButtonState();
 }
 
 function updateButtonState() {
   const hasText  = textInput.value.trim().length > 0;
-  const hasImage = imageInput.files.length > 0 || cameraInput.files.length > 0 || videoInput.files.length > 0;
+  const hasImage = !!getSelectedMediaFile();
   const canSend  = hasText || hasImage;
   sendBtn.disabled = !canSend;
   canSend ? sendBtn.classList.remove('is-disabled') : sendBtn.classList.add('is-disabled');
@@ -2364,6 +2569,7 @@ async function init() {
   await loadMe();
   await loadPreferences();
   await loadMessages();
+  await restoreSavedDraft();
   updateButtonState();
   registerServiceWorker();
   await initPushNotifications();
