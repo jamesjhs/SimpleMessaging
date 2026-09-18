@@ -128,6 +128,7 @@ export interface ApiPost {
   user:      string;
   text:      string;
   imagePath: string | null;
+  mediaType: 'image' | 'video' | 'audio' | null;
   viewOnce:  boolean;
   isBlurred: boolean;
   createdAt: number;

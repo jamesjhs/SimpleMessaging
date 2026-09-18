@@ -136,8 +136,17 @@ function escapeHtmlForEmail(value: string): string {
 const ALLOWED_MIMES = new Set([
   'image/jpeg', 'image/png', 'image/gif', 'image/webp',
   'video/mp4',  'video/webm', 'video/x-matroska', 'video/quicktime',
+  'audio/webm', 'audio/ogg',  'audio/mpeg',       'audio/mp4',
+  'audio/wav',  'audio/x-wav',
 ]);
-const ALLOWED_MEDIA_LABEL = 'JPEG, PNG, GIF, WebP, MP4, WebM, MKV, or MOV';
+const ALLOWED_MEDIA_LABEL = 'JPEG, PNG, GIF, WebP, MP4, WebM, MKV, MOV, MP3, OGG, WAV, M4A, or WebM audio';
+
+function getMediaTypeFromPath(filePath: string | null): 'image' | 'video' | 'audio' | null {
+  if (!filePath) return null;
+  if (/\.(mp4|webm|mkv|mov)$/i.test(filePath)) return 'video';
+  if (/\.(weba|mp3|ogg|wav|m4a|aac)$/i.test(filePath)) return 'audio';
+  return 'image';
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -199,6 +208,7 @@ function rowToPost(row: DbMessage, viewer?: PostViewer): ApiPost {
     user:      row.display_name ?? '',
     text:      outcomeText || (hiddenForNormal ? 'Message flagged' : row.text ?? ''),
     imagePath,
+    mediaType: getMediaTypeFromPath(imagePath),
     viewOnce:  !hiddenForNormal && row.view_once  === 1,
     isBlurred: !hiddenForNormal && row.is_blurred === 1,
     createdAt: row.created_at,
@@ -329,14 +339,21 @@ router.post(
     if (req.file) {
       const baseMime = req.file.mimetype.split(';')[0];
       const isVideo  = baseMime.startsWith('video/');
+      const isAudio  = baseMime.startsWith('audio/');
       const ext      = isVideo
         ? (baseMime.includes('webm') || baseMime.includes('matroska') ? '.webm' : '.mp4')
-        : '.jpg';
+        : isAudio
+          ? baseMime.includes('ogg') ? '.ogg'
+            : baseMime.includes('mpeg') ? '.mp3'
+              : baseMime.includes('wav') ? '.wav'
+                : baseMime.includes('mp4') ? '.m4a'
+                  : '.weba'
+          : '.jpg';
       const filename = `${crypto.randomUUID()}${ext}`;
       const filepath = path.join(UPLOADS_DIR, filename);
 
       try {
-        if (isVideo) {
+        if (isVideo || isAudio) {
           fs.writeFileSync(filepath, req.file.buffer);
         } else {
           await sharp(req.file.buffer)
@@ -472,7 +489,7 @@ router.post('/messages/:id/view', requireAuth, (req: Request, res: Response): vo
       .run(msg.id, req.user!.id, Date.now());
   }
 
-  res.json({ imagePath: msg.image_path });
+  res.json({ imagePath: msg.image_path, mediaType: getMediaTypeFromPath(msg.image_path) });
 });
 
 // ── POST /api/messages/:id/report ────────────────────────────────────────────

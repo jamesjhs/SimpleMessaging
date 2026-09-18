@@ -204,6 +204,7 @@ const overlayImg      = document.getElementById('overlayImg');
 const replyContainer  = document.getElementById('reply-preview-container');
 const previewImg      = document.getElementById('preview-img');
 const previewVideoText= document.getElementById('preview-video-text');
+const previewAudio    = document.getElementById('preview-audio');
 const previewContainer= document.getElementById('preview-container');
 const postsContainer  = document.getElementById('posts');
 
@@ -214,8 +215,14 @@ const VIDEO_UPLOAD_TARGET = {
   videoBitrate: '1000k',
   audioBitrate: '128k',
 };
+const AUDIO_UPLOAD_TARGET = {
+  bitrate: '48k',
+  sampleRate: '48000',
+};
 const VIDEO_FILE_EXT_RE = /\.(mp4|m4v|mov|webm|mkv|avi|3gp|3gpp)$/i;
+const AUDIO_FILE_EXT_RE = /\.(weba|ogg|mp3|m4a|aac|wav)$/i;
 const FFMPEG_VENDOR_BASE_URL = '/vendor/ffmpeg';
+const AUDIO_RECORDING_MAX_SECONDS = 5 * 60;
 
 // ── API helper ───────────────────────────────────────────────────────────────
 function apiFetch(url, options = {}) {
@@ -774,6 +781,7 @@ function renderMessage(p, otherLastSeen, me, cfg) {
   div.dataset.user     = p.user;
   div.dataset.text     = p.text || '';
   div.dataset.imagepath= p.imagePath || '';
+  div.dataset.mediatype= p.mediaType || '';
   div.dataset.flagstate= p.flagState || 'none';
   if (p.flagState === 'adult') div.classList.add('flagged-adult');
   if (p.flagState === 'hidden') div.classList.add('flagged-hidden');
@@ -800,19 +808,23 @@ function renderMessage(p, otherLastSeen, me, cfg) {
   // Media
   let imageHtml = '';
   if (p.imagePath) {
-    const isVideo   = /\.(mp4|webm)$/i.test(p.imagePath);
+    const mediaType = getMediaTypeFromPath(p.imagePath, p.mediaType);
+    const isVideo   = mediaType === 'video';
+    const isAudio   = mediaType === 'audio';
     const blurClass = p.isBlurred ? 'blurred-preview' : '';
 
     if (p.viewOnce) {
       const recipientSeen = p.seenBy && p.seenBy.some(u => u !== p.user);
       if (isMine) {
-        imageHtml = `<div class="view-once sent">👁️ View Once<div class="view-once-status">${recipientSeen ? 'Opened' : 'Delivered'}</div></div>`;
+        imageHtml = `<div class="view-once sent">${isAudio ? '👂 Listen Once' : '👁️ View Once'}<div class="view-once-status">${recipientSeen ? 'Opened' : 'Delivered'}</div></div>`;
       } else {
         const iSaw = !isAdultObserver() && p.seenBy && p.seenBy.includes(me);
         imageHtml  = iSaw
-          ? `<div class="view-once dead">👁️ ${isVideo ? 'Video' : 'Photo'} Viewed</div>`
-          : `<div id="view-once-${p.id}" class="view-once active" onclick="openViewOnce('${p.id}')">👁️ View Once ${isVideo ? 'Video' : 'Photo'}</div>`;
+          ? `<div class="view-once dead">${isAudio ? '👂 Voice Message Heard' : `👁️ ${isVideo ? 'Video' : 'Photo'} Viewed`}</div>`
+          : `<div id="view-once-${p.id}" class="view-once active" data-media-type="${mediaType}" onclick="openViewOnce('${p.id}')">${isAudio ? '👂 Listen Once' : `👁️ View Once ${isVideo ? 'Video' : 'Photo'}`}</div>`;
       }
+    } else if (isAudio) {
+      imageHtml = `<div class="voice-note-label">Voice message</div><audio src="${p.imagePath}" class="chat-audio" controls controlsList="nodownload" preload="metadata" oncontextmenu="return false"></audio>`;
     } else if (isVideo) {
       imageHtml = `<video src="${p.imagePath}" class="chat-img ${blurClass}"
         controls controlsList="nodownload" preload="metadata" oncontextmenu="return false" playsinline
@@ -870,7 +882,7 @@ function renderMessage(p, otherLastSeen, me, cfg) {
 }
 
 function attachMediaUnavailableFallback(messageEl) {
-  const mediaEls = messageEl.querySelectorAll('img.chat-img, video.chat-img');
+  const mediaEls = messageEl.querySelectorAll('img.chat-img, video.chat-img, audio.chat-audio');
   mediaEls.forEach(el => {
     el.addEventListener('error', () => {
       if (!el.isConnected) return;
@@ -907,10 +919,12 @@ function updateViewOnceEl(existing, p) {
   } else {
     const iSaw = !isAdultObserver() && p.seenBy && p.seenBy.includes(currentUser);
     if (iSaw && voEl.classList.contains('active')) {
-      const isVideo = p.imagePath && /\.(mp4|webm)$/i.test(p.imagePath);
+      const mediaType = getMediaTypeFromPath(p.imagePath, p.mediaType);
+      const isVideo = mediaType === 'video';
+      const isAudio = mediaType === 'audio';
       voEl.className = 'view-once dead';
       voEl.removeAttribute('id');
-      voEl.innerHTML = `👁️ ${isVideo ? 'Video' : 'Photo'} Viewed`;
+      voEl.innerHTML = isAudio ? '👂 Voice Message Heard' : `👁️ ${isVideo ? 'Video' : 'Photo'} Viewed`;
       voEl.onclick   = null;
     }
   }
@@ -995,6 +1009,41 @@ function isVideoFile(file) {
   return mime.startsWith('video/') || VIDEO_FILE_EXT_RE.test(file.name || '');
 }
 
+function isAudioFile(file) {
+  if (!file) return false;
+  const mime = (file.type || '').split(';')[0].toLowerCase();
+  return mime.startsWith('audio/') || AUDIO_FILE_EXT_RE.test(file.name || '');
+}
+
+function getMediaTypeFromFile(file) {
+  if (!file) return null;
+  if (isAudioFile(file)) return 'audio';
+  if (isVideoFile(file)) return 'video';
+  return 'image';
+}
+
+function shouldCompressAudioFile(file) {
+  if (!file || !isAudioFile(file) || file.isOptimized) return false;
+  const mime = (file.type || '').split(';')[0].toLowerCase();
+  const name = file.name || '';
+  return file.needsAudioCompression || mime === 'audio/wav' || mime === 'audio/x-wav' || /\.wav$/i.test(name);
+}
+
+function getMediaTypeFromPath(filePath, fallback = null) {
+  if (fallback) return fallback;
+  if (!filePath) return null;
+  if (AUDIO_FILE_EXT_RE.test(filePath)) return 'audio';
+  if (/\.(mp4|webm|mkv|mov)$/i.test(filePath)) return 'video';
+  return 'image';
+}
+
+function getMediaReplyLabel(filePath, mediaType = null) {
+  const type = getMediaTypeFromPath(filePath, mediaType);
+  if (type === 'audio') return 'Voice message';
+  if (type === 'video') return 'Video';
+  return filePath ? 'Photo' : '';
+}
+
 function openDraftDb() {
   return new Promise((resolve, reject) => {
     if (!('indexedDB' in window)) {
@@ -1068,6 +1117,16 @@ async function deleteSavedDraft(expectedDraftId = null) {
   }).catch(err => console.warn('[draft] delete failed:', err.message));
 }
 
+async function clearSubmittedDraft(expectedDraftId = null) {
+  const shouldClearComposer = !expectedDraftId || !currentDraftId || currentDraftId === expectedDraftId;
+  await deleteSavedDraft(expectedDraftId);
+  if (shouldClearComposer) {
+    currentDraftId = null;
+    clearPreview({ deleteDraft: false });
+    collapseAttachmentPicker();
+  }
+}
+
 function getSelectedMediaFile() {
   return imageInput.files[0] || cameraInput.files[0] || videoInput.files[0] || restoredDraftFile;
 }
@@ -1138,19 +1197,31 @@ function updateComposerLayoutForText() {
   textInput.style.height    = newH + 'px';
   textInput.style.overflowY = textInput.scrollHeight > 150 ? 'scroll' : 'hidden';
 
+  const audioRecorderOpen = document.getElementById('audio-recorder-bar')?.style.display === 'flex';
+  const hasText = textInput.value.trim().length > 0;
+  const canKeepPickerOpen = document.getElementById('media-options')?.dataset.manual === 'true'
+    && !hasText
+    && !getSelectedMediaFile()
+    && !audioRecorderOpen;
+  canKeepPickerOpen ? expandAttachmentPicker() : collapseAttachmentPicker();
+}
+
+function collapseAttachmentPicker() {
   const mediaOpts = document.getElementById('media-options');
   const plusBtn   = document.getElementById('plus-btn');
-  const hasText   = textInput.value.trim().length > 0;
-  if (hasText) {
-    if (mediaOpts.dataset.manual !== 'true') {
-      mediaOpts.style.display = 'none';
-      plusBtn.style.display   = 'block';
-    }
-  } else {
-    mediaOpts.style.display        = 'flex';
-    plusBtn.style.display          = 'none';
-    mediaOpts.dataset.manual       = 'false';
-  }
+  if (!mediaOpts || !plusBtn) return;
+  mediaOpts.style.display  = 'none';
+  mediaOpts.dataset.manual = 'false';
+  plusBtn.style.display    = 'flex';
+}
+
+function expandAttachmentPicker() {
+  const mediaOpts = document.getElementById('media-options');
+  const plusBtn   = document.getElementById('plus-btn');
+  if (!mediaOpts || !plusBtn) return;
+  mediaOpts.style.display  = 'flex';
+  mediaOpts.dataset.manual = 'true';
+  plusBtn.style.display    = 'none';
 }
 
 async function restoreSavedDraft() {
@@ -1182,6 +1253,7 @@ async function restoreSavedDraft() {
       replyContainer.style.display = 'none';
     }
     renderMediaPreview(draft.file);
+    collapseAttachmentPicker();
     updateComposerLayoutForText();
   } finally {
     isRestoringDraft = false;
@@ -1195,7 +1267,7 @@ document.getElementById('postForm').addEventListener('submit', async e => {
   let fileToSend  = getSelectedMediaFile();
   const text      = textInput.value.trim();
   const viewOnce  = document.getElementById('viewOnce').checked;
-  const isBlurred = document.getElementById('blurInput').checked;
+  const isBlurred = !isAudioFile(fileToSend) && document.getElementById('blurInput').checked;
   const replyData = replyingTo ? { ...replyingTo } : null;
   const submittedAt = Date.now();
   const pendingId   = 'p-' + (crypto.randomUUID ? crypto.randomUUID() : `${submittedAt}-${Math.random().toString(36).slice(2)}`);
@@ -1209,9 +1281,7 @@ document.getElementById('postForm').addEventListener('submit', async e => {
   textInput.style.height = 'auto';
   cancelReply();
   clearPreview({ deleteDraft: false });
-  document.getElementById('media-options').style.display = 'flex';
-  document.getElementById('media-options').dataset.manual = 'false';
-  document.getElementById('plus-btn').style.display = 'none';
+  collapseAttachmentPicker();
   updateButtonState();
   textInput.focus();
 
@@ -1228,6 +1298,25 @@ document.getElementById('postForm').addEventListener('submit', async e => {
       console.error('[compress]', err);
       activePendingId = null;
       setPendingFailed(pendingId, getVideoConversionFailureMessage(fileToSend, err), { retry: false });
+      return;
+    }
+    activePendingId = null;
+    const entry = pendingMessages.get(pendingId);
+    if (!entry || entry.cancelled) { removePendingBubble(pendingId); return; }
+  }
+
+  const needsAudioCompression = shouldCompressAudioFile(fileToSend);
+  if (needsAudioCompression) {
+    setPendingLabel(pendingId, 'Converting audio...');
+    setPendingProgress(pendingId, 0, '#ffc107');
+    activePendingId = pendingId;
+    try {
+      const compressed = await compressAudio(fileToSend);
+      fileToSend = compressed;
+    } catch (err) {
+      console.error('[compress-audio]', err);
+      activePendingId = null;
+      setPendingFailed(pendingId, getAudioConversionFailureMessage(fileToSend, err), { retry: false });
       return;
     }
     activePendingId = null;
@@ -1265,11 +1354,14 @@ function createPendingBubble(pendingId, text, file, replyData) {
   }
   let mediaHtml = '';
   if (file) {
-    if (isVideoFile(file)) {
+    if (isAudioFile(file)) {
+      const blobUrl = URL.createObjectURL(file);
+      mediaHtml = `<div class="pending-audio-label">Voice message</div><audio src="${blobUrl}" class="chat-audio pending-preview-media" controls preload="metadata"></audio>`;
+    } else if (isVideoFile(file)) {
       mediaHtml = `<div class="pending-video-label">[ Video ]</div>`;
     } else {
       const blobUrl = URL.createObjectURL(file);
-      mediaHtml = `<img src="${blobUrl}" class="chat-img pending-preview-img">`;
+      mediaHtml = `<img src="${blobUrl}" class="chat-img pending-preview-img pending-preview-media">`;
     }
   }
 
@@ -1338,6 +1430,19 @@ function getVideoConversionFailureMessage(file, err) {
   ].join('\n');
 }
 
+function getAudioConversionFailureMessage(file, err) {
+  const detail = getErrorMessage(err);
+  const mime = file?.type || 'missing MIME type';
+  const name = file?.name || 'unnamed audio';
+  const size = file ? formatBytes(file.size) : 'unknown size';
+  return [
+    'Audio conversion failed.',
+    `Reason: ${detail}`,
+    `File: ${name} (${mime}, ${size})`,
+    'The original WAV was not uploaded to avoid sending a large uncompressed recording.',
+  ].join('\n');
+}
+
 function setPendingFailed(pendingId, message = 'Failed to send', options = {}) {
   const entry = pendingMessages.get(pendingId);
   if (!entry) return;
@@ -1360,6 +1465,9 @@ function removePendingBubble(pendingId) {
   if (!entry) return;
   const pi = entry.bubbleEl.querySelector('.pending-preview-img');
   if (pi && pi.src.startsWith('blob:')) URL.revokeObjectURL(pi.src);
+  entry.bubbleEl.querySelectorAll('.pending-preview-media').forEach(el => {
+    if (el.src?.startsWith('blob:')) URL.revokeObjectURL(el.src);
+  });
   entry.bubbleEl.remove();
   pendingMessages.delete(pendingId);
 }
@@ -1393,8 +1501,8 @@ function startPendingUpload(pendingId) {
   xhr.onload = async () => {
     if (xhr.status === 201) {
       if (navigator.vibrate) navigator.vibrate([20, 30, 20]);
-      await deleteSavedDraft(submittedDraftId);
       removePendingBubble(pendingId);
+      await clearSubmittedDraft(submittedDraftId);
       await loadMessages();
       scrollToBottom(true);
     } else {
@@ -1454,7 +1562,7 @@ postsContainer.addEventListener('click', async e => {
   } else if (replyBtn && postDiv) {
     if (isAdultObserver()) return;
     e.stopPropagation();
-    setReply(postDiv.dataset.user, postDiv.dataset.text || (postDiv.dataset.imagepath ? 'Photo' : ''), postDiv.dataset.id);
+    setReply(postDiv.dataset.user, postDiv.dataset.text || getMediaReplyLabel(postDiv.dataset.imagepath, postDiv.dataset.mediatype), postDiv.dataset.id);
   } else if (chipEl && postDiv) {
     if (isObserverRole()) return;
     e.stopPropagation();
@@ -1517,7 +1625,7 @@ postsContainer.addEventListener('touchend', () => {
   if (currentX - startX > 60) {
     setReply(
       swipeTarget.dataset.user,
-      swipeTarget.dataset.text || (swipeTarget.dataset.imagepath ? 'Photo' : ''),
+      swipeTarget.dataset.text || getMediaReplyLabel(swipeTarget.dataset.imagepath, swipeTarget.dataset.mediatype),
       swipeTarget.dataset.id
     );
   }
@@ -1532,7 +1640,7 @@ postsContainer.addEventListener('touchend', () => {
 postsContainer.addEventListener('touchstart', e => {
   const postDiv = e.target.closest('.post');
   if (!postDiv || postDiv.classList.contains('pending-msg')) return;
-  if (e.target.closest('button, a, .chat-img, video, .view-once')) return;
+  if (e.target.closest('button, a, .chat-img, video, audio, .view-once')) return;
   lpTarget = postDiv;
   lpStartX = e.touches[0].clientX;
   lpStartY = e.touches[0].clientY;
@@ -1576,7 +1684,7 @@ postsContainer.addEventListener('mousedown', e => {
   if (e.button !== 0) return;
   const postDiv = e.target.closest('.post');
   if (!postDiv || postDiv.classList.contains('pending-msg')) return;
-  if (e.target.closest('button, a, .chat-img, video, .view-once')) return;
+  if (e.target.closest('button, a, .chat-img, video, audio, .view-once')) return;
   lpTarget = postDiv;
   lpStartX = e.clientX;
   lpStartY = e.clientY;
@@ -1605,7 +1713,7 @@ postsContainer.addEventListener('mouseup', () => {
 // Prevent browser context menu on right-click over a message bubble
 postsContainer.addEventListener('contextmenu', e => {
   const postDiv = e.target.closest('.post');
-  if (postDiv && !e.target.closest('button, a, .chat-img, video')) e.preventDefault();
+  if (postDiv && !e.target.closest('button, a, .chat-img, video, audio')) e.preventDefault();
 });
 
 // ── Reply helpers ─────────────────────────────────────────────────────────────
@@ -1663,13 +1771,31 @@ function handleImageSelect(e) {
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   clearOtherMediaInputs(e.target);
   renderMediaPreview(file);
+  collapseAttachmentPicker();
   persistCurrentDraft();
 }
 
 function renderMediaPreview(file) {
-  if (isVideoFile(file)) {
+  if (previewAudio.src.startsWith('blob:')) URL.revokeObjectURL(previewAudio.src);
+  previewAudio.pause();
+  previewAudio.removeAttribute('src');
+  previewAudio.load();
+
+  if (isAudioFile(file)) {
+    if (previewImg.src.startsWith('blob:')) URL.revokeObjectURL(previewImg.src);
     previewImg.style.display       = 'none';
     previewVideoText.style.display = 'block';
+    previewVideoText.innerText     = '[ Voice message ]';
+    previewAudio.src               = URL.createObjectURL(file);
+    previewAudio.style.display     = 'block';
+    previewContainer.style.display = 'block';
+    document.getElementById('blurInput').checked = false;
+    scrollToBottom(true);
+  } else if (isVideoFile(file)) {
+    previewImg.style.display       = 'none';
+    previewVideoText.style.display = 'block';
+    previewVideoText.innerText     = '[ Video ]';
+    previewAudio.style.display     = 'none';
     previewContainer.style.display = 'block';
     scrollToBottom(true);
   } else {
@@ -1677,6 +1803,7 @@ function renderMediaPreview(file) {
     previewImg.src                 = URL.createObjectURL(file);
     previewImg.style.display       = 'block';
     previewVideoText.style.display = 'none';
+    previewAudio.style.display     = 'none';
     previewContainer.style.display = 'block';
     previewImg.onload = () => scrollToBottom(true);
   }
@@ -1692,35 +1819,48 @@ function clearPreview(options = {}) {
   document.getElementById('viewOnce').checked  = false;
   document.getElementById('blurInput').checked = false;
   if (previewImg.src.startsWith('blob:')) URL.revokeObjectURL(previewImg.src);
+  if (previewAudio.src.startsWith('blob:')) URL.revokeObjectURL(previewAudio.src);
+  previewAudio.pause();
+  previewAudio.removeAttribute('src');
+  previewAudio.load();
   previewContainer.style.display = 'none';
   previewImg.src                 = '';
   previewImg.style.display       = 'block';
   previewVideoText.style.display = 'none';
   previewVideoText.innerText     = '[ Video ]';
+  previewAudio.style.display     = 'none';
   document.getElementById('upload-progress-container').style.display = 'none';
   document.getElementById('upload-progress-bar').style.width = '0%';
   if (deleteDraft) deleteSavedDraft();
   updateButtonState();
+  updateComposerLayoutForText();
 }
 
 function updateButtonState() {
   const hasText  = textInput.value.trim().length > 0;
-  const hasImage = !!getSelectedMediaFile();
+  const selectedMedia = getSelectedMediaFile();
+  const hasImage = !!selectedMedia;
+  const isAudio = isAudioFile(selectedMedia);
   const canSend  = hasText || hasImage;
   sendBtn.disabled = !canSend;
   canSend ? sendBtn.classList.remove('is-disabled') : sendBtn.classList.add('is-disabled');
   const hasMedia = hasImage;
-  document.getElementById('viewOnceLabel').style.display = (hasMedia && appConfig.enableViewOnce) ? 'flex' : 'none';
-  document.getElementById('blurLabel').style.display     = (hasMedia && appConfig.enableBlur)     ? 'flex' : 'none';
+  const viewOnceLabel = document.getElementById('viewOnceLabel');
+  viewOnceLabel.style.display = (hasMedia && appConfig.enableViewOnce) ? 'flex' : 'none';
+  viewOnceLabel.title = isAudio ? 'Listen Once' : 'View Once';
+  const viewOnceText = viewOnceLabel.lastChild;
+  if (viewOnceText) viewOnceText.textContent = isAudio ? ' 👂' : ' 👁️';
+  document.getElementById('blurLabel').style.display = (hasMedia && !isAudio && appConfig.enableBlur) ? 'flex' : 'none';
 }
 
 function showAttachments(e) {
   if (e) e.preventDefault();
-  const mediaOpts = document.getElementById('media-options');
-  const plusBtn   = document.getElementById('plus-btn');
-  mediaOpts.style.display  = 'flex';
-  plusBtn.style.display    = 'none';
-  mediaOpts.dataset.manual = 'true';
+  if (getSelectedMediaFile()) {
+    collapseAttachmentPicker();
+    textInput.focus();
+    return;
+  }
+  expandAttachmentPicker();
   textInput.focus();
 }
 
@@ -1768,14 +1908,24 @@ async function openViewOnce(id) {
   const res  = await apiFetch(`/api/messages/${id}/view`, { method: 'POST' });
   if (res.ok) {
     const data = await res.json();
-    showImagePopup(data.imagePath);
-    loadMessages();
+    const mediaType = getMediaTypeFromPath(data.imagePath, data.mediaType || btn?.dataset.mediaType);
+    if (mediaType === 'audio' && btn) {
+      btn.className = 'view-once';
+      btn.innerHTML = `<div class="voice-note-label">Listen once</div><audio src="${data.imagePath}" class="chat-audio" controls autoplay controlsList="nodownload" preload="metadata" oncontextmenu="return false"></audio>`;
+      const audio = btn.querySelector('audio');
+      if (audio) audio.addEventListener('ended', () => loadMessages(), { once: true });
+    } else {
+      showImagePopup(data.imagePath);
+      loadMessages();
+    }
   } else if (btn && isAdultObserver()) {
     btn.onclick = () => openViewOnce(id);
   }
 }
 
 window.addEventListener('popstate', () => {
+  const recOverlay = document.getElementById('videoRecorderOverlay');
+  if (recOverlay?.style.display === 'flex') { closeRecorder({ fromHistory: true }); return; }
   if (overlay.style.display === 'flex') { closeImagePopup(); return; }
   if (pendingMessages.size > 0) {
     history.pushState(null, '');
@@ -2086,6 +2236,13 @@ let recordedChunks   = [];
 let recStream        = null;
 let recordingInterval= null;
 let currentFacingMode= 'user';
+let audioRecorder    = null;
+let audioChunks      = [];
+let audioStream      = null;
+let audioTimer       = null;
+let audioSeconds     = 0;
+let audioRecordingMimeType = '';
+let audioRecordingActive = false;
 
 function initMediaRecorder() {
   const options = { audioBitsPerSecond: 128000, videoBitsPerSecond: 1000000 };
@@ -2107,6 +2264,7 @@ async function openRecorder() {
     video.srcObject = recStream;
     video.style.transform = currentFacingMode === 'user' ? 'scaleX(-1)' : 'none';
     recOverlay.style.display = 'flex';
+    history.pushState({ recorderOpen: true }, '');
     recordedChunks = [];
     initMediaRecorder();
     document.getElementById('recordBtn').style.display   = 'block';
@@ -2176,7 +2334,8 @@ function finishRecording() {
   closeRecorder();
 }
 
-function closeRecorder() {
+function closeRecorder(options = {}) {
+  const { fromHistory = false } = options;
   document.getElementById('videoRecorderOverlay').style.display = 'none';
   if (recStream) { recStream.getTracks().forEach(t => t.stop()); recStream = null; }
   mediaRecorder     = null;
@@ -2188,6 +2347,146 @@ function closeRecorder() {
   timer.innerText   = '🔴 00:00';
   document.getElementById('recordBtn').style.display    = 'block';
   document.getElementById('sendVideoBtn').style.display = 'none';
+  if (!fromHistory && history.state?.recorderOpen) history.back();
+}
+
+// ── In-app audio recorder ─────────────────────────────────────────────────────
+
+function getSupportedAudioMimeType() {
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/ogg;codecs=opus',
+    'audio/ogg',
+    'audio/mp4',
+  ];
+  return candidates.find(type => MediaRecorder.isTypeSupported(type)) || '';
+}
+
+function getRecordedAudioExtension(mimeType) {
+  const type = (mimeType || '').toLowerCase();
+  if (type.includes('ogg')) return '.ogg';
+  if (type.includes('mp4')) return '.m4a';
+  if (type.includes('mpeg')) return '.mp3';
+  if (type.includes('wav')) return '.wav';
+  return '.weba';
+}
+
+function formatAudioSeconds(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs < 10 ? '0' + secs : secs}`;
+}
+
+function setAudioRecorderUi(recording) {
+  document.getElementById('audio-record-start-btn').style.display = recording ? 'none' : 'inline-block';
+  document.getElementById('audio-record-stop-btn').style.display  = recording ? 'inline-block' : 'none';
+}
+
+function openAudioRecorder() {
+  if (isObserverRole()) return;
+  document.getElementById('audio-recorder-bar').style.display = 'flex';
+  document.getElementById('audio-recorder-status').textContent = 'Ready to record';
+  setAudioRecorderUi(false);
+  collapseAttachmentPicker();
+}
+
+async function startAudioRecording() {
+  if (isObserverRole()) return;
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+    alert('Audio recording is not supported in this browser.');
+    return;
+  }
+  if (audioRecordingActive) return;
+
+  try {
+    audioStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+    audioRecordingMimeType = getSupportedAudioMimeType();
+    audioRecorder = new MediaRecorder(audioStream, {
+      ...(audioRecordingMimeType ? { mimeType: audioRecordingMimeType } : {}),
+      audioBitsPerSecond: 96000,
+    });
+    audioChunks = [];
+    audioSeconds = 0;
+    audioRecordingActive = true;
+
+    audioRecorder.ondataavailable = event => {
+      if (event.data.size > 0) audioChunks.push(event.data);
+    };
+    audioRecorder.onstop = () => finishAudioRecording();
+    audioRecorder.start();
+
+    document.getElementById('audio-recorder-bar').style.display = 'flex';
+    document.getElementById('audio-recorder-status').textContent = 'Recording 0:00';
+    setAudioRecorderUi(true);
+    clearInterval(audioTimer);
+    audioTimer = setInterval(() => {
+      audioSeconds++;
+      document.getElementById('audio-recorder-status').textContent = `Recording ${formatAudioSeconds(audioSeconds)}`;
+      if (audioSeconds >= AUDIO_RECORDING_MAX_SECONDS) {
+        document.getElementById('audio-recorder-status').textContent = 'Max 5:00 reached';
+        stopAudioRecording();
+      }
+    }, 1000);
+  } catch (err) {
+    alert('Microphone access denied or not supported.');
+    console.error(err);
+    cleanupAudioRecorder();
+  }
+}
+
+function stopAudioRecording() {
+  if (!audioRecordingActive || !audioRecorder || audioRecorder.state === 'inactive') return;
+  audioRecordingActive = false;
+  audioRecorder.stop();
+}
+
+function cancelAudioRecording() {
+  audioChunks = [];
+  audioRecordingActive = false;
+  if (audioRecorder && audioRecorder.state !== 'inactive') {
+    audioRecorder.onstop = () => cleanupAudioRecorder();
+    audioRecorder.stop();
+    return;
+  }
+  cleanupAudioRecorder();
+}
+
+function finishAudioRecording() {
+  if (audioChunks.length > 0) {
+    const rawType = audioRecorder?.mimeType || audioRecordingMimeType || 'audio/webm';
+    const ext = getRecordedAudioExtension(rawType);
+    const blob = new Blob([...audioChunks], { type: rawType });
+    const file = new File([blob], `voice_${Date.now()}${ext}`, { type: rawType });
+    file.isOptimized = true;
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    imageInput.files = dt.files;
+    handleImageSelect({ target: imageInput });
+  }
+  cleanupAudioRecorder();
+}
+
+function cleanupAudioRecorder() {
+  document.getElementById('audio-recorder-bar').style.display = 'none';
+  setAudioRecorderUi(false);
+  document.getElementById('audio-recorder-status').textContent = 'Ready to record';
+  audioRecordingActive = false;
+  if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
+  audioRecorder = null;
+  audioChunks = [];
+  audioRecordingMimeType = '';
+  clearInterval(audioTimer);
+  audioTimer = null;
+  audioSeconds = 0;
+  updateComposerLayoutForText();
 }
 
 // ── FFmpeg video compression (optional, CDN-loaded) ───────────────────────────
@@ -2275,6 +2574,62 @@ async function compressVideo(file) {
   } finally {
     await ffmpegInst.deleteFile(inputName).catch(() => {});
     await ffmpegInst.deleteFile(outputName).catch(() => {});
+  }
+}
+
+async function compressAudio(file) {
+  try {
+    await loadFFmpeg();
+  } catch (err) {
+    console.warn('[ffmpeg] unavailable; audio conversion cannot continue', err);
+    throw err;
+  }
+  const inputExt = (file.name && file.name.match(/\.[^.]+$/)?.[0]) || '.wav';
+  const inputName = `audio-input${inputExt}`;
+  const outputName = 'audio-output.weba';
+  const fallbackOutputName = 'audio-output.m4a';
+
+  try {
+    await ffmpegInst.writeFile(inputName, await fetchFileBytes(file));
+    let data;
+    let name = 'voice.weba';
+    let type = 'audio/webm;codecs=opus';
+    try {
+      await ffmpegInst.exec([
+        '-y',
+        '-i', inputName,
+        '-vn',
+        '-ac', '1',
+        '-ar', AUDIO_UPLOAD_TARGET.sampleRate,
+        '-c:a', 'libopus',
+        '-b:a', AUDIO_UPLOAD_TARGET.bitrate,
+        '-application', 'voip',
+        outputName,
+      ]);
+      data = await ffmpegInst.readFile(outputName);
+    } catch (opusErr) {
+      console.warn('[ffmpeg] opus audio conversion failed; trying AAC fallback', opusErr);
+      await ffmpegInst.exec([
+        '-y',
+        '-i', inputName,
+        '-vn',
+        '-ac', '1',
+        '-ar', '44100',
+        '-c:a', 'aac',
+        '-b:a', '64k',
+        fallbackOutputName,
+      ]);
+      data = await ffmpegInst.readFile(fallbackOutputName);
+      name = 'voice.m4a';
+      type = 'audio/mp4';
+    }
+    const converted = new File([data], name, { type });
+    converted.isOptimized = true;
+    return converted;
+  } finally {
+    await ffmpegInst.deleteFile(inputName).catch(() => {});
+    await ffmpegInst.deleteFile(outputName).catch(() => {});
+    await ffmpegInst.deleteFile(fallbackOutputName).catch(() => {});
   }
 }
 

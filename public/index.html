@@ -28,14 +28,24 @@
   <div id="new-message-prompt" onclick="scrollToBottom()">New Messages ↓</div>
 
   <form id="postForm">
-    <input type="file" id="imageInput"  accept="image/*,video/*" style="display:none">
+    <input type="file" id="imageInput"  accept="image/*,video/*,audio/*" style="display:none">
     <input type="file" id="videoInput"  accept="video/*" capture="camcorder" style="display:none">
     <input type="file" id="cameraInput" accept="image/*" capture="camera" style="display:none">
 
     <div class="input-wrapper">
+      <div id="audio-recorder-bar">
+        <span id="audio-recorder-status">Ready to record</span>
+        <div id="audio-recorder-controls">
+          <button type="button" id="audio-record-start-btn" onclick="startAudioRecording()">Record</button>
+          <button type="button" id="audio-record-stop-btn" onclick="stopAudioRecording()" style="display:none;">Stop</button>
+          <button type="button" id="audio-record-cancel-btn" onclick="cancelAudioRecording()">Cancel</button>
+        </div>
+      </div>
+
       <div id="preview-container">
         <img id="preview-img" src alt="Preview">
         <div id="preview-video-text">[ Video ]</div>
+        <audio id="preview-audio" controls controlsList="nodownload" preload="metadata" oncontextmenu="return false"></audio>
         <button type="button" onclick="clearPreview()" class="clear-btn">×</button>
       </div>
 
@@ -59,13 +69,14 @@
       <textarea id="text" rows="1" placeholder="Type a message…"></textarea>
     </div>
 
-    <div id="media-options" style="display:flex;gap:5px;">
+    <div id="media-options" style="display:none;gap:5px;">
       <button type="button" class="icon-btn" onclick="document.getElementById('imageInput').click()">📎</button>
       <button type="button" class="icon-btn" onclick="document.getElementById('cameraInput').click()">📷</button>
       <button type="button" class="icon-btn" onclick="openRecorder()">🎥</button>
+      <button type="button" class="icon-btn" onclick="openAudioRecorder()" style="display:none;">🎙</button>
     </div>
     <button type="button" id="plus-btn" class="icon-btn"
-      style="display:none;font-size:1.8rem;font-weight:bold;padding:0 15px;"
+      style="display:flex;font-size:1.8rem;font-weight:bold;padding:0 15px;"
       onmousedown="showAttachments(event)">+</button>
 
     <button type="submit" class="icon-btn post-btn is-disabled" disabled>➤</button>

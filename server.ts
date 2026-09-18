@@ -141,7 +141,11 @@ app.use('/uploads', (req: Request, res: Response, next: NextFunction): void => {
   const user    = resolveSession(cookies.session);
   if (!user?.enabled) { res.sendStatus(401); return; }
   next();
-}, express.static(UPLOADS_DIR));
+}, express.static(UPLOADS_DIR, {
+  setHeaders: (res: Response, filePath: string) => {
+    if (filePath.endsWith('.weba')) res.setHeader('Content-Type', 'audio/webm');
+  },
+}));
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/readyz', (_req: Request, res: Response): void => {
