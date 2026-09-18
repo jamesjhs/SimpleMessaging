@@ -22,6 +22,7 @@ const jsonUp  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10
 const imageUp = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 const publicDir = path.join(__dirname, '..', 'public');
 const pwaIconSizes = [72, 96, 128, 144, 152, 180, 192, 384, 512] as const;
+const MIN_SITE_TITLE_LENGTH = 2;
 
 function hasVapidConfiguration(): boolean {
   return Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
@@ -337,6 +338,15 @@ router.patch('/settings', (req: Request, res: Response): void => {
   if (requestedPushEnabled && !hasVapidConfiguration()) {
     res.status(400).json({ error: 'Configure VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY before enabling push notifications.' });
     return;
+  }
+
+  if ('site_title' in body) {
+    const siteTitle = String(body.site_title).trim();
+    if (siteTitle.length > 0 && siteTitle.length < MIN_SITE_TITLE_LENGTH) {
+      res.status(400).json({ error: `Site Title must be at least ${MIN_SITE_TITLE_LENGTH} characters.` });
+      return;
+    }
+    body.site_title = siteTitle;
   }
 
   for (const k of allowed) {
