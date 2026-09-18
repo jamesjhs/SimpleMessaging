@@ -211,11 +211,6 @@ export async function initDb(): Promise<DB> {
   };
   const insertSetting = db.prepare('INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)');
   for (const [k, v] of Object.entries(defaults)) insertSetting.run(k, v);
-  const migratedDefaultName = db.prepare("SELECT value FROM app_settings WHERE key = 'default_app_name_migrated'").get();
-  if (!migratedDefaultName) {
-    db.prepare("UPDATE app_settings SET value = 'Messaging' WHERE key IN ('site_title', 'main_header') AND value = 'TLS'").run();
-    insertSetting.run('default_app_name_migrated', '1');
-  }
 
   // ── Seed admin from .env ──────────────────────────────────────────────────
   const adminUser = process.env.ADMIN_USERNAME;
