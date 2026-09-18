@@ -647,7 +647,16 @@ textarea#text {
   display: flex; flex-direction: column; gap: 10px;
   box-shadow: var(--shadow-strong), var(--inset-highlight);
 }
-#login-logo { width: 64px; height: 64px; object-fit: contain; align-self: center; margin-bottom: 4px; }
+#login-logo {
+  width: 64px;
+  height: 64px;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 50%;
+  align-self: center;
+  flex: 0 0 64px;
+  margin-bottom: 4px;
+}
 #login-title { text-align: center; font-size: 1.2rem; margin: 0 0 4px; }
 
 #login-box input {
