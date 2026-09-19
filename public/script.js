@@ -57,6 +57,7 @@ let restoredDraftFile = null;
 let isRestoringDraft  = false;
 let draftSaveTimer    = null;
 let currentDraftId    = null;
+const submittedDraftIds = new Set();
 
 const DRAFT_DB_NAME      = 'tls-message-drafts';
 const DRAFT_DB_VERSION   = 1;
@@ -1098,7 +1099,12 @@ async function getSavedDraft() {
 }
 
 async function saveDraft(draft) {
+  if (draft?.draftId && submittedDraftIds.has(draft.draftId)) return;
   await withDraftStore('readwrite', (store, resolve, reject) => {
+    if (draft?.draftId && submittedDraftIds.has(draft.draftId)) {
+      resolve();
+      return;
+    }
     const req = store.put(draft, CURRENT_DRAFT_KEY);
     req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error || new Error('Could not save draft'));
@@ -1120,6 +1126,11 @@ async function deleteSavedDraft(expectedDraftId = null) {
 }
 
 async function clearSubmittedDraft(expectedDraftId = null) {
+  if (draftSaveTimer) {
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
+  }
+  if (expectedDraftId) submittedDraftIds.add(expectedDraftId);
   const shouldClearComposer = !expectedDraftId || !currentDraftId || currentDraftId === expectedDraftId;
   await deleteSavedDraft(expectedDraftId);
   if (shouldClearComposer) {
@@ -1274,9 +1285,14 @@ document.getElementById('postForm').addEventListener('submit', async e => {
   const submittedAt = Date.now();
   const pendingId   = 'p-' + (crypto.randomUUID ? crypto.randomUUID() : `${submittedAt}-${Math.random().toString(36).slice(2)}`);
   const submittedDraftId = currentDraftId;
+  if (submittedDraftId) submittedDraftIds.add(submittedDraftId);
+  if (draftSaveTimer) {
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
+  }
 
   const bubbleEl = createPendingBubble(pendingId, text, fileToSend, replyData);
-  pendingMessages.set(pendingId, { bubbleEl, formData: null, xhr: null, cancelled: false });
+  pendingMessages.set(pendingId, { bubbleEl, formData: null, xhr: null, cancelled: false, submittedDraftId });
 
   // Reset form immediately
   textInput.value = '';
@@ -1504,7 +1520,7 @@ function startPendingUpload(pendingId) {
     if (xhr.status === 201) {
       if (navigator.vibrate) navigator.vibrate([20, 30, 20]);
       removePendingBubble(pendingId);
-      await clearSubmittedDraft(submittedDraftId);
+      await clearSubmittedDraft(entry.submittedDraftId);
       await loadMessages();
       scrollToBottom(true);
     } else {
