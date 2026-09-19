@@ -34,7 +34,13 @@
 
     <div class="input-wrapper">
       <div id="audio-recorder-bar">
-        <span id="audio-recorder-status">Ready to record</span>
+        <div id="audio-recorder-feedback">
+          <span id="audio-recorder-status" aria-live="polite">Ready to record</span>
+          <div id="audio-waveform-frame">
+            <canvas id="audio-waveform" role="img" aria-label="Live microphone input level"></canvas>
+            <span id="audio-level-status">Microphone level</span>
+          </div>
+        </div>
         <div id="audio-recorder-controls">
           <button type="button" id="audio-record-start-btn" onclick="startAudioRecording()">Record</button>
           <button type="button" id="audio-record-stop-btn" onclick="stopAudioRecording()" style="display:none;">Stop</button>

@@ -55,10 +55,10 @@ export const MEDIA_SETTING_OPTIONS = {
     { value: 'wav', label: 'WAV PCM' },
   ],
   audioUploadBitrate: [
-    { value: '32k', label: '32 kbps' },
     { value: '48k', label: '48 kbps' },
     { value: '64k', label: '64 kbps' },
     { value: '96k', label: '96 kbps' },
+    { value: '128k', label: '128 kbps' },
   ],
   audioRecordingSampleRate: [
     { value: '44100', label: '44.1 kHz' },

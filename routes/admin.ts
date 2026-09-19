@@ -306,6 +306,7 @@ router.get('/settings', (_req: Request, res: Response): void => {
   ];
   const out: Record<string, string | null> = {};
   for (const k of keys) out[k] = getSetting(k);
+  for (const k of MEDIA_SETTING_KEYS) out[k] = normalizeMediaSetting(k, out[k]) ?? getSetting(k);
   out.site_title = getAppName();
   out.main_header = getMainHeader();
   out.vapid_configured = hasVapidConfiguration() ? '1' : '0';

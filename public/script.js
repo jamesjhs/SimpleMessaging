@@ -239,6 +239,13 @@ const VIDEO_FILE_EXT_RE = /\.(mp4|m4v|mov|webm|mkv|avi|3gp|3gpp)$/i;
 const AUDIO_FILE_EXT_RE = /\.(weba|ogg|mp3|m4a|aac|wav)$/i;
 const FFMPEG_VENDOR_BASE_URL = '/vendor/ffmpeg';
 const AUDIO_RECORDING_MIN_BYTES_PER_SECOND = 8000;
+const AUDIO_LEVEL_ACTIVE_RMS = 0.003;
+const AUDIO_LEVEL_WARNING_DELAY_MS = 2000;
+const AUDIO_LEVEL_HISTORY_SIZE = 90;
+// Diagnostic baseline: mirror the working video recorder's default audio capture.
+const AUDIO_RECORDING_FORCE_WEB_AUDIO = false;
+const AUDIO_RECORDING_USE_BROWSER_DEFAULTS = true;
+const AUDIO_RECORDING_FORCE_SCRIPT_PROCESSOR = false;
 
 // ── API helper ───────────────────────────────────────────────────────────────
 function apiFetch(url, options = {}) {
@@ -2317,6 +2324,7 @@ let audioTimer       = null;
 let audioSeconds     = 0;
 let audioRecordingMimeType = '';
 let audioRecordingActive = false;
+let audioRecorderMode = 'wav';
 let audioContext     = null;
 let audioSourceNode  = null;
 let audioProcessorNode = null;
@@ -2325,7 +2333,29 @@ let audioSilenceNode = null;
 let audioSampleRate  = 0;
 let audioFramesRecorded = 0;
 let audioRecordingStartedAt = 0;
+let audioRecordingStopRequestedAt = 0;
 let audioStopTimeout = null;
+let audioRecordingStartedPerformance = 0;
+let audioRecordingStoppedPerformance = 0;
+let audioRecordingFinalizing = false;
+let audioTrack = null;
+let audioMonitorContext = null;
+let audioMonitorContextOwned = false;
+let audioMonitorSourceNode = null;
+let audioAnalyserNode = null;
+let audioMonitorAnimationFrame = null;
+let audioMonitorBuffer = null;
+let audioLevelHistory = [];
+let audioLastLevelRenderedAt = 0;
+let audioLastInputAt = 0;
+let audioInputDetected = false;
+let audioCaptureIssue = '';
+let audioRecordingDiagnostics = null;
+let audioVisibilityListener = null;
+let audioWindowBlurListener = null;
+let audioWindowFocusListener = null;
+let audioDeviceChangeListener = null;
+let audioRefreshWasRunning = false;
 
 function initMediaRecorder() {
   const options = {
@@ -2449,13 +2479,32 @@ function closeRecorder(options = {}) {
 // ── In-app audio recorder ─────────────────────────────────────────────────────
 
 function getSupportedAudioMimeType() {
-  const candidates = [
-    'audio/webm;codecs=opus',
-    'audio/webm',
-    'audio/ogg;codecs=opus',
-    'audio/ogg',
-    'audio/mp4',
-  ];
+  if (typeof MediaRecorder === 'undefined') return '';
+  const preferred = AUDIO_UPLOAD_TARGET.format;
+  const candidates = preferred === 'aac'
+    ? [
+        'audio/mp4;codecs=mp4a.40.2',
+        'audio/mp4',
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/ogg',
+      ]
+    : preferred === 'opus'
+      ? [
+          'audio/webm;codecs=opus',
+          'audio/webm',
+          'audio/ogg;codecs=opus',
+          'audio/ogg',
+        ]
+      : [
+          'audio/webm;codecs=opus',
+          'audio/webm',
+          'audio/ogg;codecs=opus',
+          'audio/ogg',
+          'audio/mp4;codecs=mp4a.40.2',
+          'audio/mp4',
+        ];
   return candidates.find(type => MediaRecorder.isTypeSupported(type)) || '';
 }
 
@@ -2477,6 +2526,296 @@ function formatAudioSeconds(seconds) {
 function setAudioRecorderUi(recording) {
   document.getElementById('audio-record-start-btn').style.display = recording ? 'none' : 'inline-block';
   document.getElementById('audio-record-stop-btn').style.display  = recording ? 'inline-block' : 'none';
+}
+
+function setAudioLevelStatus(text, state = '') {
+  const status = document.getElementById('audio-level-status');
+  if (!status) return;
+  status.textContent = text;
+  if (state) status.dataset.state = state;
+  else delete status.dataset.state;
+}
+
+function drawAudioWaveform() {
+  const canvas = document.getElementById('audio-waveform');
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const scale = Math.min(window.devicePixelRatio || 1, 2);
+  const width = Math.max(1, Math.round(rect.width * scale));
+  const height = Math.max(1, Math.round(rect.height * scale));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  context.clearRect(0, 0, width, height);
+  context.strokeStyle = 'rgba(255,255,255,0.16)';
+  context.lineWidth = scale;
+  context.beginPath();
+  context.moveTo(0, height / 2);
+  context.lineTo(width, height / 2);
+  context.stroke();
+
+  if (!audioLevelHistory.length) return;
+  const barWidth = width / AUDIO_LEVEL_HISTORY_SIZE;
+  context.fillStyle = audioCaptureIssue ? '#e36b6b' : '#65d58a';
+  audioLevelHistory.forEach((level, index) => {
+    const barHeight = Math.max(scale, level * (height - 4 * scale));
+    context.fillRect(index * barWidth, (height - barHeight) / 2, Math.max(scale, barWidth - scale), barHeight);
+  });
+}
+
+function resetAudioWaveform() {
+  audioLevelHistory = [];
+  audioLastLevelRenderedAt = 0;
+  audioLastInputAt = 0;
+  audioInputDetected = false;
+  audioCaptureIssue = '';
+  setAudioLevelStatus('Listening...');
+  drawAudioWaveform();
+}
+
+function getAudioDiagnosticElapsedMs() {
+  if (!audioRecordingStartedPerformance) return 0;
+  return Math.round(performance.now() - audioRecordingStartedPerformance);
+}
+
+function recordAudioDiagnosticEvent(type, detail = {}) {
+  if (!audioRecordingDiagnostics) return;
+  audioRecordingDiagnostics.events.push({
+    type,
+    elapsedMs: getAudioDiagnosticElapsedMs(),
+    ...detail,
+  });
+}
+
+function getSafeAudioTrackSettings(track) {
+  const settings = track?.getSettings?.() || {};
+  const keys = [
+    'sampleRate', 'sampleSize', 'channelCount', 'latency',
+    'echoCancellation', 'noiseSuppression', 'autoGainControl',
+  ];
+  return Object.fromEntries(keys.filter(key => settings[key] !== undefined).map(key => [key, settings[key]]));
+}
+
+function beginAudioDiagnostics(mode, mimeType) {
+  const requestedConstraints = getAudioCaptureConstraints();
+  audioRecordingDiagnostics = {
+    startedAt: new Date().toISOString(),
+    mode,
+    mimeType,
+    requested: requestedConstraints === true
+      ? { browserDefaults: true }
+      : { ...requestedConstraints },
+    trackSettings: getSafeAudioTrackSettings(audioTrack),
+    chunks: [],
+    monitorReads: 0,
+    activeLevelReads: 0,
+    peak: 0,
+    messageRefreshPaused: audioRefreshWasRunning,
+    events: [],
+  };
+  window.__lastAudioRecordingDiagnostics = audioRecordingDiagnostics;
+  recordAudioDiagnosticEvent('recording-started', {
+    pageVisible: !document.hidden,
+    trackState: audioTrack?.readyState || 'unknown',
+  });
+
+  audioVisibilityListener = () => {
+    recordAudioDiagnosticEvent('visibility-changed', { hidden: document.hidden });
+  };
+  audioWindowBlurListener = () => recordAudioDiagnosticEvent('window-blurred');
+  audioWindowFocusListener = () => recordAudioDiagnosticEvent('window-focused');
+  audioDeviceChangeListener = () => recordAudioDiagnosticEvent('audio-devices-changed');
+  document.addEventListener('visibilitychange', audioVisibilityListener);
+  window.addEventListener('blur', audioWindowBlurListener);
+  window.addEventListener('focus', audioWindowFocusListener);
+  navigator.mediaDevices?.addEventListener?.('devicechange', audioDeviceChangeListener);
+}
+
+function pauseMessageRefreshForAudioRecording() {
+  audioRefreshWasRunning = refreshTimer !== null;
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
+}
+
+function resumeMessageRefreshAfterAudioRecording() {
+  if (audioRefreshWasRunning && !refreshTimer && currentUser) {
+    refreshTimer = setInterval(loadMessages, 2000);
+  }
+  audioRefreshWasRunning = false;
+}
+
+function finishAudioDiagnostics(outcome, detail = {}) {
+  if (!audioRecordingDiagnostics) return;
+  audioRecordingDiagnostics.outcome = outcome;
+  audioRecordingDiagnostics.finishedAt = new Date().toISOString();
+  audioRecordingDiagnostics.elapsedMs = Math.round(
+    (audioRecordingStoppedPerformance || performance.now()) - audioRecordingStartedPerformance,
+  );
+  Object.assign(audioRecordingDiagnostics, detail);
+  window.__lastAudioRecordingDiagnostics = audioRecordingDiagnostics;
+  console.info('[audio-recorder] diagnostics', audioRecordingDiagnostics);
+}
+
+function attachAudioTrackDiagnostics() {
+  audioTrack = audioStream?.getAudioTracks?.()[0] || null;
+  if (!audioTrack) return;
+  audioTrack.onmute = () => {
+    audioCaptureIssue = 'Microphone interrupted';
+    setAudioLevelStatus(audioCaptureIssue, 'error');
+    recordAudioDiagnosticEvent('track-muted');
+    drawAudioWaveform();
+  };
+  audioTrack.onunmute = () => {
+    audioCaptureIssue = '';
+    setAudioLevelStatus('Listening...');
+    recordAudioDiagnosticEvent('track-unmuted');
+  };
+  audioTrack.onended = () => {
+    audioCaptureIssue = 'Microphone disconnected';
+    setAudioLevelStatus(audioCaptureIssue, 'error');
+    recordAudioDiagnosticEvent('track-ended');
+    drawAudioWaveform();
+  };
+}
+
+function stopAudioInputTracks() {
+  if (audioTrack) {
+    audioTrack.onmute = null;
+    audioTrack.onunmute = null;
+    audioTrack.onended = null;
+  }
+  if (audioStream) audioStream.getTracks().forEach(track => track.stop());
+}
+
+function processAudioLevelSamples(samples) {
+  if (!samples?.length || !audioRecordingActive) return;
+  let sumSquares = 0;
+  let peak = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const value = samples[i];
+    sumSquares += value * value;
+    peak = Math.max(peak, Math.abs(value));
+  }
+  const rms = Math.sqrt(sumSquares / samples.length);
+  const now = performance.now();
+  if (audioRecordingDiagnostics) {
+    audioRecordingDiagnostics.monitorReads++;
+    audioRecordingDiagnostics.peak = Math.max(audioRecordingDiagnostics.peak, peak);
+    if (rms >= AUDIO_LEVEL_ACTIVE_RMS) audioRecordingDiagnostics.activeLevelReads++;
+  }
+  if (rms >= AUDIO_LEVEL_ACTIVE_RMS) {
+    audioInputDetected = true;
+    audioLastInputAt = now;
+  }
+  if (now - audioLastLevelRenderedAt < 40) return;
+  audioLastLevelRenderedAt = now;
+  const decibels = rms > 0 ? 20 * Math.log10(rms) : -80;
+  const displayLevel = Math.max(0.015, Math.min(1, (decibels + 60) / 48));
+  audioLevelHistory.push(displayLevel);
+  if (audioLevelHistory.length > AUDIO_LEVEL_HISTORY_SIZE) audioLevelHistory.shift();
+  drawAudioWaveform();
+}
+
+function updateAudioCaptureHealth() {
+  if (!audioRecordingActive || audioRecordingFinalizing) return;
+  if (audioCaptureIssue) {
+    setAudioLevelStatus(audioCaptureIssue, 'error');
+    return;
+  }
+  const now = performance.now();
+  const elapsed = now - audioRecordingStartedPerformance;
+  const inputRecentlyActive = audioLastInputAt && now - audioLastInputAt < AUDIO_LEVEL_WARNING_DELAY_MS;
+  if (inputRecentlyActive) setAudioLevelStatus('Input detected', 'active');
+  else if (elapsed >= AUDIO_LEVEL_WARNING_DELAY_MS) setAudioLevelStatus('No input detected', 'warning');
+  else setAudioLevelStatus('Listening...');
+}
+
+async function startAudioLevelMonitor(stream, context = null, sourceNode = null) {
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextCtor) {
+    setAudioLevelStatus('Level unavailable', 'warning');
+    recordAudioDiagnosticEvent('monitor-unavailable');
+    return;
+  }
+  try {
+    audioMonitorContext = context || new AudioContextCtor();
+    audioMonitorContextOwned = !context;
+    audioMonitorContext.onstatechange = () => {
+      recordAudioDiagnosticEvent('monitor-state-changed', { state: audioMonitorContext?.state || 'closed' });
+    };
+    if (audioMonitorContext.state === 'suspended') await audioMonitorContext.resume();
+    audioMonitorSourceNode = sourceNode || audioMonitorContext.createMediaStreamSource(stream);
+    audioAnalyserNode = audioMonitorContext.createAnalyser();
+    audioAnalyserNode.fftSize = 1024;
+    audioAnalyserNode.smoothingTimeConstant = 0.35;
+    audioMonitorSourceNode.connect(audioAnalyserNode);
+    audioMonitorBuffer = new Float32Array(audioAnalyserNode.fftSize);
+
+    const sampleLevel = () => {
+      if (!audioAnalyserNode || !audioRecordingActive) return;
+      audioAnalyserNode.getFloatTimeDomainData(audioMonitorBuffer);
+      processAudioLevelSamples(audioMonitorBuffer);
+      audioMonitorAnimationFrame = requestAnimationFrame(sampleLevel);
+    };
+    sampleLevel();
+    recordAudioDiagnosticEvent('monitor-started', { sampleRate: audioMonitorContext.sampleRate });
+  } catch (err) {
+    setAudioLevelStatus('Level unavailable', 'warning');
+    recordAudioDiagnosticEvent('monitor-failed', { message: getErrorMessage(err) });
+    console.warn('[audio-recorder] level monitor unavailable', err);
+  }
+}
+
+function stopAudioLevelMonitor() {
+  if (audioMonitorAnimationFrame !== null) cancelAnimationFrame(audioMonitorAnimationFrame);
+  audioMonitorAnimationFrame = null;
+  disconnectAudioNode(audioAnalyserNode);
+  audioAnalyserNode = null;
+  if (audioMonitorContextOwned) disconnectAudioNode(audioMonitorSourceNode);
+  audioMonitorSourceNode = null;
+  audioMonitorBuffer = null;
+  if (audioMonitorContext) audioMonitorContext.onstatechange = null;
+  if (audioMonitorContextOwned && audioMonitorContext) audioMonitorContext.close().catch(() => {});
+  audioMonitorContext = null;
+  audioMonitorContextOwned = false;
+}
+
+function getAudioCaptureConstraints() {
+  if (AUDIO_RECORDING_USE_BROWSER_DEFAULTS) return true;
+  return {
+    channelCount: 1,
+    sampleRate: { ideal: AUDIO_RECORDING_TARGET.sampleRate },
+    echoCancellation: AUDIO_RECORDING_TARGET.echoCancellation,
+    noiseSuppression: AUDIO_RECORDING_TARGET.noiseSuppression,
+    autoGainControl: AUDIO_RECORDING_TARGET.autoGainControl,
+  };
+}
+
+function parseAudioBitsPerSecond() {
+  const kbps = parseInt(String(AUDIO_UPLOAD_TARGET.bitrate).replace(/\D/g, ''), 10);
+  return (Number.isFinite(kbps) ? kbps : 64) * 1000;
+}
+
+function startAudioRecordingClock() {
+  document.getElementById('audio-recorder-bar').style.display = 'flex';
+  document.getElementById('audio-recorder-status').textContent = 'Recording 0:00';
+  setAudioRecorderUi(true);
+  clearInterval(audioTimer);
+  clearTimeout(audioStopTimeout);
+  audioTimer = setInterval(() => {
+    updateAudioRecordingStatus();
+    updateAudioCaptureHealth();
+  }, 250);
+  audioStopTimeout = setTimeout(() => {
+    document.getElementById('audio-recorder-status').textContent = `Max ${formatAudioSeconds(AUDIO_RECORDING_TARGET.maxSeconds)} reached`;
+    stopAudioRecording();
+  }, AUDIO_RECORDING_TARGET.maxSeconds * 1000);
 }
 
 function createWavBlob(chunks, sampleRate, totalFrames) {
@@ -2524,6 +2863,70 @@ function createWavBlob(chunks, sampleRate, totalFrames) {
   return new Blob([buffer], { type: 'audio/wav' });
 }
 
+async function decodeAudioBlob(blob) {
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+  const context = new AudioContextCtor();
+  try {
+    return await context.decodeAudioData(await blob.arrayBuffer());
+  } finally {
+    context.close().catch(() => {});
+  }
+}
+
+function summarizeDecodedAudio(audioBuffer) {
+  const channelData = audioBuffer.getChannelData(0);
+  const windowFrames = Math.max(1, Math.round(audioBuffer.sampleRate * 0.02));
+  let activeWindows = 0;
+  let totalWindows = 0;
+  let lastActiveFrame = 0;
+  let peak = 0;
+  for (let start = 0; start < channelData.length; start += windowFrames) {
+    const end = Math.min(channelData.length, start + windowFrames);
+    let sumSquares = 0;
+    for (let i = start; i < end; i++) {
+      const value = channelData[i];
+      sumSquares += value * value;
+      peak = Math.max(peak, Math.abs(value));
+    }
+    const rms = Math.sqrt(sumSquares / Math.max(1, end - start));
+    if (rms >= AUDIO_LEVEL_ACTIVE_RMS) {
+      activeWindows++;
+      lastActiveFrame = end;
+    }
+    totalWindows++;
+  }
+  return {
+    durationSeconds: audioBuffer.duration,
+    activeRatio: totalWindows ? activeWindows / totalWindows : 0,
+    trailingSilenceSeconds: Math.max(0, (audioBuffer.length - lastActiveFrame) / audioBuffer.sampleRate),
+    peak,
+  };
+}
+
+function createWavFileFromAudioBuffer(audioBuffer) {
+  const frames = audioBuffer.length;
+  const channels = audioBuffer.numberOfChannels;
+  const mono = new Float32Array(frames);
+  for (let channelIndex = 0; channelIndex < channels; channelIndex++) {
+    const channelData = audioBuffer.getChannelData(channelIndex);
+    for (let i = 0; i < frames; i++) mono[i] += channelData[i] / channels;
+  }
+  const wavBlob = createWavBlob([mono], audioBuffer.sampleRate, frames);
+  const file = new File([wavBlob], `voice_${Date.now()}.wav`, { type: 'audio/wav' });
+  file.isOptimized = true;
+  return file;
+}
+
+function validateDecodedAudioDuration(decodedSeconds) {
+  const stoppedAt = audioRecordingStoppedPerformance || performance.now();
+  if (!audioRecordingStartedPerformance || !decodedSeconds) return;
+  const expectedSeconds = Math.max(0, (stoppedAt - audioRecordingStartedPerformance) / 1000);
+  const toleranceSeconds = Math.max(0.5, expectedSeconds * 0.1);
+  if (expectedSeconds >= 2 && decodedSeconds < expectedSeconds - toleranceSeconds) {
+    throw new Error(`Recorded audio is truncated (${decodedSeconds.toFixed(1)}s captured from ${expectedSeconds.toFixed(1)}s recorded).`);
+  }
+}
+
 function getAudioRecordingElapsedSeconds() {
   if (!audioRecordingStartedAt) return audioSeconds;
   return Math.min(
@@ -2540,8 +2943,12 @@ function updateAudioRecordingStatus(prefix = 'Recording') {
 
 function appendAudioSamples(input) {
   if (!audioRecordingActive || !input?.length) return;
+  if (audioFramesRecorded === 0) {
+    recordAudioDiagnosticEvent('first-pcm-block', { frames: input.length });
+  }
   audioChunks.push(new Float32Array(input));
   audioFramesRecorded += input.length;
+  processAudioLevelSamples(input);
 }
 
 function disconnectAudioNode(node) {
@@ -2553,7 +2960,8 @@ function disconnectAudioNode(node) {
 }
 
 async function createAudioCaptureNode(context) {
-  if (context.audioWorklet && typeof AudioWorkletNode !== 'undefined') {
+  if (!AUDIO_RECORDING_FORCE_SCRIPT_PROCESSOR &&
+      context.audioWorklet && typeof AudioWorkletNode !== 'undefined') {
     try {
       await context.audioWorklet.addModule('/audio-recorder-worklet.js');
       audioWorkletNode = new AudioWorkletNode(context, 'tls-audio-recorder', {
@@ -2578,29 +2986,128 @@ function openAudioRecorder() {
   if (isObserverRole()) return;
   document.getElementById('audio-recorder-bar').style.display = 'flex';
   document.getElementById('audio-recorder-status').textContent = 'Ready to record';
+  resetAudioWaveform();
+  setAudioLevelStatus('Microphone level');
   setAudioRecorderUi(false);
   collapseAttachmentPicker();
+}
+
+async function startNativeAudioRecording(mimeType) {
+  audioStream = await navigator.mediaDevices.getUserMedia({ audio: getAudioCaptureConstraints() });
+  attachAudioTrackDiagnostics();
+  audioChunks = [];
+  audioSeconds = 0;
+  audioRecordingMimeType = mimeType;
+  audioRecordingStartedAt = Date.now();
+  audioRecordingStopRequestedAt = 0;
+  audioRecordingStartedPerformance = performance.now();
+  audioRecordingStoppedPerformance = 0;
+  audioRecordingFinalizing = false;
+  audioRecordingActive = true;
+  audioRecorderMode = 'native';
+  resetAudioWaveform();
+  beginAudioDiagnostics('native', mimeType);
+
+  const options = { mimeType, audioBitsPerSecond: parseAudioBitsPerSecond() };
+  audioRecorder = new MediaRecorder(audioStream, options);
+  audioRecorder.ondataavailable = event => {
+    recordAudioDiagnosticEvent('data-available', {
+      bytes: event.data?.size || 0,
+      timecode: Number.isFinite(event.timecode) ? Math.round(event.timecode) : null,
+    });
+    if (event.data?.size > 0) {
+      audioChunks.push(event.data);
+      audioRecordingDiagnostics?.chunks.push({
+        elapsedMs: getAudioDiagnosticElapsedMs(),
+        bytes: event.data.size,
+        timecode: Number.isFinite(event.timecode) ? Math.round(event.timecode) : null,
+      });
+    }
+  };
+  audioRecorder.onstop = () => {
+    recordAudioDiagnosticEvent('recorder-stopped', { chunks: audioChunks.length });
+    stopAudioInputTracks();
+    setTimeout(() => { finishNativeAudioRecording(); }, 0);
+  };
+  audioRecorder.onerror = event => {
+    const message = getErrorMessage(event.error || event);
+    recordAudioDiagnosticEvent('recorder-error', { message });
+    finishAudioDiagnostics('error', { error: message });
+    alert(`Audio recording failed: ${message}`);
+    cleanupAudioRecorder();
+  };
+  audioRecorder.onpause = () => recordAudioDiagnosticEvent('recorder-paused');
+  audioRecorder.onresume = () => recordAudioDiagnosticEvent('recorder-resumed');
+  audioRecorder.start();
+  recordAudioDiagnosticEvent('recorder-running', { state: audioRecorder.state });
+  startAudioRecordingClock();
+  startAudioLevelMonitor(audioStream);
+}
+
+async function finishNativeAudioRecording() {
+  if (!audioRecordingFinalizing) audioRecordingFinalizing = true;
+  if (audioChunks.length > 0) {
+    const cleanType = (audioRecorder?.mimeType || audioRecordingMimeType || 'audio/webm').split(';')[0];
+    const blob = new Blob(audioChunks, { type: cleanType });
+    let file;
+    try {
+      const audioBuffer = await decodeAudioBlob(blob);
+      validateDecodedAudioDuration(audioBuffer.duration);
+      const signal = summarizeDecodedAudio(audioBuffer);
+      if (audioRecordingDiagnostics) audioRecordingDiagnostics.decoded = signal;
+      file = AUDIO_UPLOAD_TARGET.format === 'wav'
+        ? createWavFileFromAudioBuffer(audioBuffer)
+        : new File([blob], `voice_${Date.now()}${getRecordedAudioExtension(cleanType)}`, { type: cleanType });
+      file.isOptimized = true;
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      imageInput.files = dt.files;
+      handleImageSelect({ target: imageInput });
+      const extendedSilence = signal.durationSeconds >= 3 &&
+        signal.trailingSilenceSeconds >= Math.max(2, signal.durationSeconds * 0.5);
+      finishAudioDiagnostics('complete', { blobBytes: blob.size, outputBytes: file.size });
+      if (extendedSilence && audioInputDetected) {
+        setTimeout(() => alert('The recording contains a long period with no detected audio. Please review the preview before sending.'), 0);
+      }
+    } catch (err) {
+      const message = getErrorMessage(err);
+      finishAudioDiagnostics('rejected', { error: message, blobBytes: blob.size });
+      alert(message);
+      cleanupAudioRecorder();
+      return;
+    }
+  } else {
+    finishAudioDiagnostics('rejected', { error: 'No encoded chunks were produced.' });
+    alert('No audio was captured. Please check microphone access and try again.');
+  }
+  cleanupAudioRecorder();
 }
 
 async function startAudioRecording() {
   if (isObserverRole()) return;
   if (!navigator.mediaDevices?.getUserMedia ||
-      (typeof AudioContext === 'undefined' && typeof webkitAudioContext === 'undefined')) {
+      (typeof MediaRecorder === 'undefined' &&
+       typeof AudioContext === 'undefined' && typeof webkitAudioContext === 'undefined')) {
     alert('Audio recording is not supported in this browser.');
     return;
   }
   if (audioRecordingActive) return;
 
+  pauseMessageRefreshForAudioRecording();
   try {
-    audioStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        sampleRate: { ideal: AUDIO_RECORDING_TARGET.sampleRate },
-        echoCancellation: AUDIO_RECORDING_TARGET.echoCancellation,
-        noiseSuppression: AUDIO_RECORDING_TARGET.noiseSuppression,
-        autoGainControl: AUDIO_RECORDING_TARGET.autoGainControl,
-      },
-    });
+    const nativeMimeType = AUDIO_RECORDING_FORCE_WEB_AUDIO ? '' : getSupportedAudioMimeType();
+    if (nativeMimeType) {
+      await startNativeAudioRecording(nativeMimeType);
+      return;
+    }
+
+    if (typeof AudioContext === 'undefined' && typeof webkitAudioContext === 'undefined') {
+      alert('Audio recording is not supported in this browser.');
+      return;
+    }
+
+    audioStream = await navigator.mediaDevices.getUserMedia({ audio: getAudioCaptureConstraints() });
+    attachAudioTrackDiagnostics();
 
     const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
     try {
@@ -2613,31 +3120,27 @@ async function startAudioRecording() {
     audioSourceNode = audioContext.createMediaStreamSource(audioStream);
     const captureNode = await createAudioCaptureNode(audioContext);
     audioSilenceNode = audioContext.createGain();
-    audioSilenceNode.gain.value = 0;
+    // Keep the processing graph renderable without producing audible monitoring.
+    audioSilenceNode.gain.value = 1e-8;
 
     audioChunks = [];
     audioSeconds = 0;
     audioSampleRate = audioContext.sampleRate;
     audioFramesRecorded = 0;
     audioRecordingStartedAt = Date.now();
+    audioRecordingStartedPerformance = performance.now();
+    audioRecordingStoppedPerformance = 0;
+    audioRecordingFinalizing = false;
     audioRecordingActive = true;
+    audioRecorderMode = 'wav';
+    resetAudioWaveform();
+    beginAudioDiagnostics('script-processor', 'audio/wav');
 
     audioSourceNode.connect(captureNode);
     captureNode.connect(audioSilenceNode);
     audioSilenceNode.connect(audioContext.destination);
 
-    document.getElementById('audio-recorder-bar').style.display = 'flex';
-    document.getElementById('audio-recorder-status').textContent = 'Recording 0:00';
-    setAudioRecorderUi(true);
-    clearInterval(audioTimer);
-    clearTimeout(audioStopTimeout);
-    audioTimer = setInterval(() => {
-      updateAudioRecordingStatus();
-    }, 250);
-    audioStopTimeout = setTimeout(() => {
-      document.getElementById('audio-recorder-status').textContent = `Max ${formatAudioSeconds(AUDIO_RECORDING_TARGET.maxSeconds)} reached`;
-      stopAudioRecording();
-    }, AUDIO_RECORDING_TARGET.maxSeconds * 1000);
+    startAudioRecordingClock();
   } catch (err) {
     alert('Microphone access denied or not supported.');
     console.error(err);
@@ -2648,12 +3151,47 @@ async function startAudioRecording() {
 function stopAudioRecording() {
   if (!audioRecordingActive) return;
   audioRecordingActive = false;
+  audioRecordingFinalizing = true;
+  audioRecordingStopRequestedAt = Date.now();
+  audioRecordingStoppedPerformance = performance.now();
+  document.getElementById('audio-recorder-status').textContent = 'Finalising recording';
+  setAudioLevelStatus('Checking audio...');
+  stopAudioLevelMonitor();
+  recordAudioDiagnosticEvent('stop-requested', {
+    recorderState: audioRecorder?.state || audioRecorderMode,
+    trackState: audioTrack?.readyState || 'unknown',
+  });
+  if (audioRecorderMode === 'native' && audioRecorder) {
+    if (audioRecorder.state !== 'inactive') {
+      try {
+        audioRecorder.stop();
+      } catch (err) {
+        const message = getErrorMessage(err);
+        recordAudioDiagnosticEvent('stop-failed', { message });
+        finishAudioDiagnostics('error', { error: message });
+        alert(`Could not stop audio recording: ${message}`);
+        cleanupAudioRecorder();
+      }
+    }
+    else finishNativeAudioRecording();
+    return;
+  }
   finishAudioRecording();
 }
 
 function cancelAudioRecording() {
   audioChunks = [];
   audioRecordingActive = false;
+  audioRecordingStopRequestedAt = Date.now();
+  audioRecordingStoppedPerformance = performance.now();
+  recordAudioDiagnosticEvent('recording-cancelled');
+  finishAudioDiagnostics('cancelled');
+  if (audioRecorder) {
+    audioRecorder.onstop = null;
+    if (audioRecorder.state !== 'inactive') {
+      try { audioRecorder.stop(); } catch {}
+    }
+  }
   cleanupAudioRecorder();
 }
 
@@ -2661,7 +3199,17 @@ function finishAudioRecording() {
   if (audioChunks.length > 0 && audioFramesRecorded > 0 && audioSampleRate > 0) {
     const blob = createWavBlob(audioChunks, audioSampleRate, audioFramesRecorded);
     const recordedSeconds = audioFramesRecorded / audioSampleRate;
+    try {
+      validateDecodedAudioDuration(recordedSeconds);
+    } catch (err) {
+      const message = getErrorMessage(err);
+      finishAudioDiagnostics('rejected', { error: message, recordedSeconds });
+      alert(message);
+      cleanupAudioRecorder();
+      return;
+    }
     if (blob.size < Math.max(44, recordedSeconds * AUDIO_RECORDING_MIN_BYTES_PER_SECOND)) {
+      finishAudioDiagnostics('rejected', { error: 'PCM output was smaller than expected.', recordedSeconds });
       alert('The recording was too small to be valid. Please keep this screen open and try again.');
       cleanupAudioRecorder();
       return;
@@ -2672,7 +3220,9 @@ function finishAudioRecording() {
     dt.items.add(file);
     imageInput.files = dt.files;
     handleImageSelect({ target: imageInput });
+    finishAudioDiagnostics('complete', { recordedSeconds, outputBytes: file.size });
   } else {
+    finishAudioDiagnostics('rejected', { error: 'No PCM samples were produced.' });
     alert('No audio was captured. Please check microphone access and try again.');
   }
   cleanupAudioRecorder();
@@ -2683,7 +3233,26 @@ function cleanupAudioRecorder() {
   setAudioRecorderUi(false);
   document.getElementById('audio-recorder-status').textContent = 'Ready to record';
   audioRecordingActive = false;
-  if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
+  stopAudioLevelMonitor();
+  if (audioVisibilityListener) {
+    document.removeEventListener('visibilitychange', audioVisibilityListener);
+    audioVisibilityListener = null;
+  }
+  if (audioWindowBlurListener) {
+    window.removeEventListener('blur', audioWindowBlurListener);
+    audioWindowBlurListener = null;
+  }
+  if (audioWindowFocusListener) {
+    window.removeEventListener('focus', audioWindowFocusListener);
+    audioWindowFocusListener = null;
+  }
+  if (audioDeviceChangeListener) {
+    navigator.mediaDevices?.removeEventListener?.('devicechange', audioDeviceChangeListener);
+    audioDeviceChangeListener = null;
+  }
+  stopAudioInputTracks();
+  audioTrack = null;
+  audioStream = null;
   if (audioProcessorNode) {
     audioProcessorNode.onaudioprocess = null;
     disconnectAudioNode(audioProcessorNode);
@@ -2706,9 +3275,17 @@ function cleanupAudioRecorder() {
     audioContext.close().catch(() => {});
     audioContext = null;
   }
+  if (audioRecorder) {
+    audioRecorder.ondataavailable = null;
+    audioRecorder.onstop = null;
+    audioRecorder.onerror = null;
+    audioRecorder.onpause = null;
+    audioRecorder.onresume = null;
+  }
   audioRecorder = null;
   audioChunks = [];
   audioRecordingMimeType = '';
+  audioRecorderMode = 'wav';
   clearInterval(audioTimer);
   clearTimeout(audioStopTimeout);
   audioTimer = null;
@@ -2717,6 +3294,14 @@ function cleanupAudioRecorder() {
   audioSampleRate = 0;
   audioFramesRecorded = 0;
   audioRecordingStartedAt = 0;
+  audioRecordingStopRequestedAt = 0;
+  audioRecordingStartedPerformance = 0;
+  audioRecordingStoppedPerformance = 0;
+  audioRecordingFinalizing = false;
+  audioRecordingDiagnostics = null;
+  audioCaptureIssue = '';
+  setAudioLevelStatus('Microphone level');
+  resumeMessageRefreshAfterAudioRecording();
   updateComposerLayoutForText();
 }
 
