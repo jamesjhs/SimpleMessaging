@@ -203,7 +203,7 @@ tr:hover td { background: rgba(255,255,255,0.02); }
   grid-template-columns: 240px 1fr;
   gap: 10px 16px;
   align-items: center;
-  max-width: 600px;
+  max-width: 720px;
 }
 .settings-grid input[type="text"],
 .settings-grid select {
@@ -218,6 +218,14 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .settings-grid input[type="text"]:focus,
 .settings-grid select:focus { border-color: #007bff; }
 .settings-grid input[type="checkbox"]   { width: 16px; height: 16px; cursor: pointer; }
+.settings-subheading {
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--admin-border);
+  color: var(--admin-muted);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+}
 .colour-scheme-admin-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

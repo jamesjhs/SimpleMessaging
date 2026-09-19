@@ -21,6 +21,22 @@ const FONT_OPTION_CATALOG = {
   friendly: 'Friendly',
 };
 
+const MEDIA_SETTING_KEYS = [
+  'video_recording_size',
+  'video_recording_fps',
+  'video_recording_video_bitrate',
+  'video_recording_audio_bitrate',
+  'video_conversion_size',
+  'video_conversion_fps',
+  'video_conversion_video_bitrate',
+  'video_conversion_audio_bitrate',
+  'image_max_dimension',
+  'audio_upload_format',
+  'audio_upload_bitrate',
+  'audio_recording_sample_rate',
+  'audio_recording_max_seconds',
+];
+
 // ── Navigation ────────────────────────────────────────────────────────────────
 
 function showSection(name) {
@@ -96,6 +112,16 @@ function renderAvailableColourSchemes(catalogIds, selectedValue) {
       </span>
     `;
     container.appendChild(label);
+  });
+}
+
+function renderMediaSettingOptions(optionsByKey) {
+  document.querySelectorAll('[data-media-options]').forEach(select => {
+    const optionKey = select.dataset.mediaOptions;
+    const options = Array.isArray(optionsByKey?.[optionKey]) ? optionsByKey[optionKey] : [];
+    select.innerHTML = options.map(option =>
+      `<option value="${esc(option.value)}">${esc(option.label)}</option>`
+    ).join('');
   });
 }
 
@@ -354,6 +380,7 @@ async function loadSettings() {
   const form = document.getElementById('settings-form');
   adminSettingsMeta.vapidConfigured = s.vapid_configured === '1';
   const catalogIds = JSON.parse(s.colour_scheme_catalog || '[]');
+  renderMediaSettingOptions(JSON.parse(s.media_setting_options || '{}'));
   JSON.parse(s.font_option_catalog || '[]').forEach(id => {
     if (!FONT_OPTION_CATALOG[id]) return;
     const option = form.elements.default_font_family?.querySelector(`option[value="${CSS.escape(id)}"]`);
@@ -407,11 +434,11 @@ async function saveSettings(e) {
   const form = document.getElementById('settings-form');
   const body = {};
 
-  ['site_title','main_header','delete_button','reply_button','read_status_unread','read_status_seen','default_font_family'].forEach(k => {
+  ['site_title','main_header','delete_button','reply_button','read_status_unread','read_status_seen','default_font_family', ...MEDIA_SETTING_KEYS].forEach(k => {
     const el = form.elements[k];
     if (el) body[k] = el.value;
   });
-  ['enable_delete_button','enable_view_once','enable_blur','enable_emergency_exit','report_enabled','pwa_enabled','push_notifications_enabled'].forEach(k => {
+  ['enable_delete_button','enable_view_once','enable_blur','enable_emergency_exit','report_enabled','pwa_enabled','push_notifications_enabled','audio_echo_cancellation','audio_noise_suppression','audio_auto_gain_control'].forEach(k => {
     const el = form.elements[k];
     if (el) body[k] = el.checked ? '1' : '0';
   });

@@ -217,14 +217,27 @@ const VIDEO_UPLOAD_TARGET = {
   audioBitrate: '128k',
 };
 const AUDIO_UPLOAD_TARGET = {
+  format: 'wav',
   bitrate: '48k',
   sampleRate: '48000',
+};
+const VIDEO_RECORDING_TARGET = {
+  width: 600,
+  height: 800,
+  fps: 24,
+  videoBitsPerSecond: 1000000,
+  audioBitsPerSecond: 128000,
+};
+const AUDIO_RECORDING_TARGET = {
+  sampleRate: 48000,
+  maxSeconds: 5 * 60,
+  echoCancellation: false,
+  noiseSuppression: false,
+  autoGainControl: false,
 };
 const VIDEO_FILE_EXT_RE = /\.(mp4|m4v|mov|webm|mkv|avi|3gp|3gpp)$/i;
 const AUDIO_FILE_EXT_RE = /\.(weba|ogg|mp3|m4a|aac|wav)$/i;
 const FFMPEG_VENDOR_BASE_URL = '/vendor/ffmpeg';
-const AUDIO_RECORDING_MAX_SECONDS = 5 * 60;
-const AUDIO_RECORDING_MAX_MS = AUDIO_RECORDING_MAX_SECONDS * 1000;
 const AUDIO_RECORDING_MIN_BYTES_PER_SECOND = 8000;
 
 // ── API helper ───────────────────────────────────────────────────────────────
@@ -602,11 +615,52 @@ document.getElementById('login-username').addEventListener('keydown', e => {
 
 // ── Config & initialisation ───────────────────────────────────────────────────
 
+function parseMediaSize(value, fallbackWidth, fallbackHeight) {
+  const [width, height] = String(value || '').split('x').map(part => parseInt(part, 10));
+  return {
+    width: Number.isFinite(width) ? width : fallbackWidth,
+    height: Number.isFinite(height) ? height : fallbackHeight,
+  };
+}
+
+function parseMediaInteger(value, fallback) {
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function applyMediaConfig() {
+  const media = appConfig.media || {};
+  const recordingSize = parseMediaSize(media.videoRecordingSize, 600, 800);
+  VIDEO_RECORDING_TARGET.width = recordingSize.width;
+  VIDEO_RECORDING_TARGET.height = recordingSize.height;
+  VIDEO_RECORDING_TARGET.fps = parseMediaInteger(media.videoRecordingFps, 24);
+  VIDEO_RECORDING_TARGET.videoBitsPerSecond = parseMediaInteger(media.videoRecordingVideoBitrate, 1000000);
+  VIDEO_RECORDING_TARGET.audioBitsPerSecond = parseMediaInteger(media.videoRecordingAudioBitrate, 128000);
+
+  const conversionSize = parseMediaSize(media.videoConversionSize, 600, 800);
+  VIDEO_UPLOAD_TARGET.width = conversionSize.width;
+  VIDEO_UPLOAD_TARGET.height = conversionSize.height;
+  VIDEO_UPLOAD_TARGET.fps = parseMediaInteger(media.videoConversionFps, 24);
+  VIDEO_UPLOAD_TARGET.videoBitrate = media.videoConversionVideoBitrate || '1000k';
+  VIDEO_UPLOAD_TARGET.audioBitrate = media.videoConversionAudioBitrate || '128k';
+
+  AUDIO_UPLOAD_TARGET.format = media.audioUploadFormat || 'wav';
+  AUDIO_UPLOAD_TARGET.bitrate = media.audioUploadBitrate || '48k';
+  AUDIO_UPLOAD_TARGET.sampleRate = media.audioRecordingSampleRate || '48000';
+
+  AUDIO_RECORDING_TARGET.sampleRate = parseMediaInteger(media.audioRecordingSampleRate, 48000);
+  AUDIO_RECORDING_TARGET.maxSeconds = parseMediaInteger(media.audioRecordingMaxSeconds, 5 * 60);
+  AUDIO_RECORDING_TARGET.echoCancellation = !!media.audioEchoCancellation;
+  AUDIO_RECORDING_TARGET.noiseSuppression = !!media.audioNoiseSuppression;
+  AUDIO_RECORDING_TARGET.autoGainControl = !!media.audioAutoGainControl;
+}
+
 async function loadConfig() {
   try {
     const res = await apiFetch('/api/config');
     appConfig  = await res.json();
 
+    applyMediaConfig();
     applyAppConfigChrome();
     if (appConfig.enableEmergencyExit) activateEmergencyExit();
     renderColourSchemeButtons();
@@ -1027,9 +1081,11 @@ function getMediaTypeFromFile(file) {
 
 function shouldCompressAudioFile(file) {
   if (!file || !isAudioFile(file) || file.isOptimized) return false;
+  if (AUDIO_UPLOAD_TARGET.format === 'wav') return false;
   const mime = (file.type || '').split(';')[0].toLowerCase();
   const name = file.name || '';
-  return file.needsAudioCompression || mime === 'audio/wav' || mime === 'audio/x-wav' || /\.wav$/i.test(name);
+  if (AUDIO_UPLOAD_TARGET.format === 'aac') return mime !== 'audio/mp4' && !/\.(m4a|mp4)$/i.test(name);
+  return file.needsAudioCompression || mime === 'audio/wav' || mime === 'audio/x-wav' || /\.wav$/i.test(name) || !mime.includes('webm');
 }
 
 function getMediaTypeFromPath(filePath, fallback = null) {
@@ -2272,7 +2328,10 @@ let audioRecordingStartedAt = 0;
 let audioStopTimeout = null;
 
 function initMediaRecorder() {
-  const options = { audioBitsPerSecond: 128000, videoBitsPerSecond: 1000000 };
+  const options = {
+    audioBitsPerSecond: VIDEO_RECORDING_TARGET.audioBitsPerSecond,
+    videoBitsPerSecond: VIDEO_RECORDING_TARGET.videoBitsPerSecond,
+  };
   if (MediaRecorder.isTypeSupported('video/mp4'))               options.mimeType = 'video/mp4';
   else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) options.mimeType = 'video/webm;codecs=vp9';
   else if (MediaRecorder.isTypeSupported('video/webm'))         options.mimeType = 'video/webm';
@@ -2286,7 +2345,12 @@ async function openRecorder() {
   try {
     recStream = await navigator.mediaDevices.getUserMedia({
       audio: true,
-      video: { facingMode: currentFacingMode, width: { ideal: 600 }, height: { ideal: 800 }, frameRate: { ideal: 24, max: 30 } },
+      video: {
+        facingMode: currentFacingMode,
+        width: { ideal: VIDEO_RECORDING_TARGET.width },
+        height: { ideal: VIDEO_RECORDING_TARGET.height },
+        frameRate: { ideal: VIDEO_RECORDING_TARGET.fps, max: Math.max(30, VIDEO_RECORDING_TARGET.fps) },
+      },
     });
     video.srcObject = recStream;
     video.style.transform = currentFacingMode === 'user' ? 'scaleX(-1)' : 'none';
@@ -2309,7 +2373,12 @@ async function flipCamera() {
   try {
     recStream = await navigator.mediaDevices.getUserMedia({
       audio: true,
-      video: { facingMode: currentFacingMode, width: { ideal: 600 }, height: { ideal: 800 }, frameRate: { ideal: 24, max: 30 } },
+      video: {
+        facingMode: currentFacingMode,
+        width: { ideal: VIDEO_RECORDING_TARGET.width },
+        height: { ideal: VIDEO_RECORDING_TARGET.height },
+        frameRate: { ideal: VIDEO_RECORDING_TARGET.fps, max: Math.max(30, VIDEO_RECORDING_TARGET.fps) },
+      },
     });
     video.srcObject       = recStream;
     video.style.transform = currentFacingMode === 'user' ? 'scaleX(-1)' : 'none';
@@ -2458,7 +2527,7 @@ function createWavBlob(chunks, sampleRate, totalFrames) {
 function getAudioRecordingElapsedSeconds() {
   if (!audioRecordingStartedAt) return audioSeconds;
   return Math.min(
-    AUDIO_RECORDING_MAX_SECONDS,
+    AUDIO_RECORDING_TARGET.maxSeconds,
     Math.floor((Date.now() - audioRecordingStartedAt) / 1000),
   );
 }
@@ -2526,14 +2595,19 @@ async function startAudioRecording() {
     audioStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
+        sampleRate: { ideal: AUDIO_RECORDING_TARGET.sampleRate },
+        echoCancellation: AUDIO_RECORDING_TARGET.echoCancellation,
+        noiseSuppression: AUDIO_RECORDING_TARGET.noiseSuppression,
+        autoGainControl: AUDIO_RECORDING_TARGET.autoGainControl,
       },
     });
 
     const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-    audioContext = new AudioContextCtor();
+    try {
+      audioContext = new AudioContextCtor({ sampleRate: AUDIO_RECORDING_TARGET.sampleRate });
+    } catch {
+      audioContext = new AudioContextCtor();
+    }
     if (audioContext.state === 'suspended') await audioContext.resume();
 
     audioSourceNode = audioContext.createMediaStreamSource(audioStream);
@@ -2561,9 +2635,9 @@ async function startAudioRecording() {
       updateAudioRecordingStatus();
     }, 250);
     audioStopTimeout = setTimeout(() => {
-      document.getElementById('audio-recorder-status').textContent = 'Max 5:00 reached';
+      document.getElementById('audio-recorder-status').textContent = `Max ${formatAudioSeconds(AUDIO_RECORDING_TARGET.maxSeconds)} reached`;
       stopAudioRecording();
-    }, AUDIO_RECORDING_MAX_MS);
+    }, AUDIO_RECORDING_TARGET.maxSeconds * 1000);
   } catch (err) {
     alert('Microphone access denied or not supported.');
     console.error(err);
@@ -2593,7 +2667,7 @@ function finishAudioRecording() {
       return;
     }
     const file = new File([blob], `voice_${Date.now()}.wav`, { type: 'audio/wav' });
-    file.isOptimized = true;
+    file.isOptimized = AUDIO_UPLOAD_TARGET.format === 'wav';
     const dt = new DataTransfer();
     dt.items.add(file);
     imageInput.files = dt.files;
@@ -2749,23 +2823,9 @@ async function compressAudio(file) {
   try {
     await ffmpegInst.writeFile(inputName, await fetchFileBytes(file));
     let data;
-    let name = 'voice.weba';
-    let type = 'audio/webm;codecs=opus';
-    try {
-      await ffmpegInst.exec([
-        '-y',
-        '-i', inputName,
-        '-vn',
-        '-ac', '1',
-        '-ar', AUDIO_UPLOAD_TARGET.sampleRate,
-        '-c:a', 'libopus',
-        '-b:a', AUDIO_UPLOAD_TARGET.bitrate,
-        '-application', 'voip',
-        outputName,
-      ]);
-      data = await ffmpegInst.readFile(outputName);
-    } catch (opusErr) {
-      console.warn('[ffmpeg] opus audio conversion failed; trying AAC fallback', opusErr);
+    let name;
+    let type;
+    if (AUDIO_UPLOAD_TARGET.format === 'aac') {
       await ffmpegInst.exec([
         '-y',
         '-i', inputName,
@@ -2773,12 +2833,44 @@ async function compressAudio(file) {
         '-ac', '1',
         '-ar', '44100',
         '-c:a', 'aac',
-        '-b:a', '64k',
+        '-b:a', AUDIO_UPLOAD_TARGET.bitrate,
         fallbackOutputName,
       ]);
       data = await ffmpegInst.readFile(fallbackOutputName);
       name = 'voice.m4a';
       type = 'audio/mp4';
+    } else {
+      name = 'voice.weba';
+      type = 'audio/webm;codecs=opus';
+      try {
+        await ffmpegInst.exec([
+          '-y',
+          '-i', inputName,
+          '-vn',
+          '-ac', '1',
+          '-ar', AUDIO_UPLOAD_TARGET.sampleRate,
+          '-c:a', 'libopus',
+          '-b:a', AUDIO_UPLOAD_TARGET.bitrate,
+          '-application', 'voip',
+          outputName,
+        ]);
+        data = await ffmpegInst.readFile(outputName);
+      } catch (opusErr) {
+        console.warn('[ffmpeg] opus audio conversion failed; trying AAC fallback', opusErr);
+        await ffmpegInst.exec([
+          '-y',
+          '-i', inputName,
+          '-vn',
+          '-ac', '1',
+          '-ar', '44100',
+          '-c:a', 'aac',
+          '-b:a', AUDIO_UPLOAD_TARGET.bitrate,
+          fallbackOutputName,
+        ]);
+        data = await ffmpegInst.readFile(fallbackOutputName);
+        name = 'voice.m4a';
+        type = 'audio/mp4';
+      }
     }
     const converted = new File([data], name, { type });
     converted.isOptimized = true;

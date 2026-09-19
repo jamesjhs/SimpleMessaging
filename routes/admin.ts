@@ -15,6 +15,7 @@ import { rateLimiter }                                 from '../lib/rateLimiter'
 import { COLOUR_SCHEME_IDS, parseAvailableColourSchemes } from '../lib/colourSchemes';
 import { getAppName, getMainHeader }                   from '../lib/appName';
 import { FONT_OPTION_IDS, normalizeFontOption }         from '../lib/fontOptions';
+import { MEDIA_SETTING_KEYS, MEDIA_SETTING_OPTIONS, normalizeMediaSetting } from '../lib/mediaSettings';
 import type { DbUser, UserRole }                       from '../types';
 
 const router  = Router();
@@ -301,6 +302,7 @@ router.get('/settings', (_req: Request, res: Response): void => {
     'enable_blur',          'enable_emergency_exit',  'enable_delete_button',
     'delete_button',        'reply_button',           'read_status_seen',
     'read_status_unread',   'chat_icon_url',
+    ...MEDIA_SETTING_KEYS,
   ];
   const out: Record<string, string | null> = {};
   for (const k of keys) out[k] = getSetting(k);
@@ -309,6 +311,7 @@ router.get('/settings', (_req: Request, res: Response): void => {
   out.vapid_configured = hasVapidConfiguration() ? '1' : '0';
   out.colour_scheme_catalog = JSON.stringify(COLOUR_SCHEME_IDS);
   out.font_option_catalog = JSON.stringify(FONT_OPTION_IDS);
+  out.media_setting_options = JSON.stringify(MEDIA_SETTING_OPTIONS);
   res.json(out);
 });
 
@@ -361,6 +364,12 @@ router.patch('/settings', (req: Request, res: Response): void => {
   }
   if ('default_font_family' in body) {
     setSetting('default_font_family', normalizeFontOption(String(body.default_font_family)));
+  }
+  for (const k of MEDIA_SETTING_KEYS) {
+    if (k in body) {
+      const value = normalizeMediaSetting(k, body[k]);
+      if (value !== null) setSetting(k, value);
+    }
   }
 
   if ('pwa_enabled' in body) {

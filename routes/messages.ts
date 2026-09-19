@@ -16,11 +16,17 @@ import { rateLimiter }                  from '../lib/rateLimiter';
 import { isColourSchemeAvailable, parseAvailableColourSchemes } from '../lib/colourSchemes';
 import { getAppName, getMainHeader }    from '../lib/appName';
 import { FONT_OPTION_IDS, normalizeFontOption } from '../lib/fontOptions';
+import { MEDIA_SETTING_DEFAULTS, normalizeMediaSetting } from '../lib/mediaSettings';
 import type { DbMessage, ApiPost, DbUserPreferences, UserRole } from '../types';
 import { version as APP_VERSION }       from '../package.json';
 
 const router      = Router();
 const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
+
+function getMediaSetting(key: keyof typeof MEDIA_SETTING_DEFAULTS): string {
+  return normalizeMediaSetting(key, getSetting(key) ?? MEDIA_SETTING_DEFAULTS[key])
+    ?? MEDIA_SETTING_DEFAULTS[key];
+}
 
 // ── VAPID initialisation ──────────────────────────────────────────────────────
 
@@ -258,6 +264,23 @@ router.get('/config', (_req: Request, res: Response): void => {
     availableColourSchemes:     parseAvailableColourSchemes(getSetting('available_colour_schemes')),
     fontOptions:                FONT_OPTION_IDS,
     defaultFontFamily:          normalizeFontOption(getSetting('default_font_family')),
+    media: {
+      videoRecordingSize:         getMediaSetting('video_recording_size'),
+      videoRecordingFps:          getMediaSetting('video_recording_fps'),
+      videoRecordingVideoBitrate: getMediaSetting('video_recording_video_bitrate'),
+      videoRecordingAudioBitrate: getMediaSetting('video_recording_audio_bitrate'),
+      videoConversionSize:        getMediaSetting('video_conversion_size'),
+      videoConversionFps:         getMediaSetting('video_conversion_fps'),
+      videoConversionVideoBitrate:getMediaSetting('video_conversion_video_bitrate'),
+      videoConversionAudioBitrate:getMediaSetting('video_conversion_audio_bitrate'),
+      audioUploadFormat:          getMediaSetting('audio_upload_format'),
+      audioUploadBitrate:         getMediaSetting('audio_upload_bitrate'),
+      audioRecordingSampleRate:   getMediaSetting('audio_recording_sample_rate'),
+      audioRecordingMaxSeconds:   getMediaSetting('audio_recording_max_seconds'),
+      audioEchoCancellation:      getMediaSetting('audio_echo_cancellation') === '1',
+      audioNoiseSuppression:      getMediaSetting('audio_noise_suppression') === '1',
+      audioAutoGainControl:       getMediaSetting('audio_auto_gain_control') === '1',
+    },
     appVersion:                 APP_VERSION,
   });
 });
@@ -356,9 +379,10 @@ router.post(
         if (isVideo || isAudio) {
           fs.writeFileSync(filepath, req.file.buffer);
         } else {
+          const imageMaxDimension = parseInt(getMediaSetting('image_max_dimension'), 10);
           await sharp(req.file.buffer)
             .rotate()
-            .resize(2000, 2000, { fit: 'inside', withoutEnlargement: true })
+            .resize(imageMaxDimension, imageMaxDimension, { fit: 'inside', withoutEnlargement: true })
             .toFormat('jpeg')
             .jpeg({ quality: 85 })
             .withMetadata()

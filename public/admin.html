@@ -116,6 +116,56 @@
             Requires PWA to be enabled and VAPID keys configured in the server environment. Users must install the PWA and opt in individually from their settings panel.
           </div>
 
+          <h3 class="settings-subheading col-span-2">Media Quality</h3>
+
+          <label>Video Recording Size</label>
+          <select name="video_recording_size" data-media-options="videoRecordingSize"></select>
+
+          <label>Video Recording Frame Rate</label>
+          <select name="video_recording_fps" data-media-options="videoRecordingFps"></select>
+
+          <label>Video Recording Bitrate</label>
+          <select name="video_recording_video_bitrate" data-media-options="videoRecordingVideoBitrate"></select>
+
+          <label>Video Recording Audio</label>
+          <select name="video_recording_audio_bitrate" data-media-options="videoRecordingAudioBitrate"></select>
+
+          <label>Video Conversion Size</label>
+          <select name="video_conversion_size" data-media-options="videoConversionSize"></select>
+
+          <label>Video Conversion Frame Rate</label>
+          <select name="video_conversion_fps" data-media-options="videoConversionFps"></select>
+
+          <label>Video Conversion Bitrate</label>
+          <select name="video_conversion_video_bitrate" data-media-options="videoConversionVideoBitrate"></select>
+
+          <label>Video Conversion Audio</label>
+          <select name="video_conversion_audio_bitrate" data-media-options="videoConversionAudioBitrate"></select>
+
+          <label>Image Max Dimension</label>
+          <select name="image_max_dimension" data-media-options="imageMaxDimension"></select>
+
+          <label>Audio Upload Format</label>
+          <select name="audio_upload_format" data-media-options="audioUploadFormat"></select>
+
+          <label>Audio Upload Bitrate</label>
+          <select name="audio_upload_bitrate" data-media-options="audioUploadBitrate"></select>
+
+          <label>Audio Recording Sample Rate</label>
+          <select name="audio_recording_sample_rate" data-media-options="audioRecordingSampleRate"></select>
+
+          <label>Audio Recording Limit</label>
+          <select name="audio_recording_max_seconds" data-media-options="audioRecordingMaxSeconds"></select>
+
+          <label>Echo Cancellation</label>
+          <input type="checkbox" name="audio_echo_cancellation">
+
+          <label>Noise Suppression</label>
+          <input type="checkbox" name="audio_noise_suppression">
+
+          <label>Auto Gain Control</label>
+          <input type="checkbox" name="audio_auto_gain_control">
+
           <label>Chat Icon</label>
           <div>
             <img id="icon-preview" src="/icon.svg" alt="Chat icon preview">
