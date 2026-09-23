@@ -352,7 +352,7 @@ Older messages are loaded on demand via `GET /api/messages?limit=30&before=<time
 
 ### 8.3 Optimistic Pending Bubbles
 
-When a message is submitted, a "pending" bubble is shown immediately in the user's colour with a progress bar fed by `XMLHttpRequest.upload.onprogress`. On success the bubble is replaced by the server-confirmed message returned by the next poll. On failure a retry/cancel UI appears.
+When a message is submitted, a "pending" bubble is shown immediately in the user's colour with a progress bar fed by `XMLHttpRequest.upload.onprogress`. If the picker contains multiple selected files, the client queues one pending bubble and one `/api/messages` POST per file, preserving the existing single-media message contract. On success each bubble is replaced by the server-confirmed message returned by the next poll. On failure a retry/cancel UI appears.
 
 ### 8.4 View-Once Messages
 
@@ -424,6 +424,8 @@ Images: `image/jpeg`, `image/png`, `image/gif`, `image/webp`
 Videos: `video/mp4`, `video/webm`, `video/x-matroska`, `video/quicktime`
 
 Maximum file size: **100 MB** (enforced by multer).
+
+The browser media picker allows multiple files. Each selected file is sent as its own message through the existing `POST /api/messages` endpoint; the database still stores one media path per message.
 
 ### Image Processing (sharp)
 

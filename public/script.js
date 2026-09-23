@@ -1288,7 +1288,14 @@ async function clearSubmittedDraft(expectedDraftId = null) {
 }
 
 function getSelectedMediaFile() {
-  return imageInput.files[0] || cameraInput.files[0] || videoInput.files[0] || restoredDraftFile;
+  return getSelectedMediaFiles()[0] || null;
+}
+
+function getSelectedMediaFiles() {
+  if (imageInput.files.length > 0) return Array.from(imageInput.files);
+  if (cameraInput.files.length > 0) return Array.from(cameraInput.files);
+  if (videoInput.files.length > 0) return Array.from(videoInput.files);
+  return restoredDraftFile ? [restoredDraftFile] : [];
 }
 
 function getSelectedMediaSourceId() {
@@ -1424,13 +1431,12 @@ document.getElementById('postForm').addEventListener('submit', async e => {
   e.preventDefault();
   if (isObserverRole()) return;
 
-  let fileToSend  = getSelectedMediaFile();
+  const files     = getSelectedMediaFiles();
   const text      = textInput.value.trim();
   const viewOnce  = document.getElementById('viewOnce').checked;
-  const isBlurred = !isAudioFile(fileToSend) && document.getElementById('blurInput').checked;
+  const wantsBlur = document.getElementById('blurInput').checked;
   const replyData = replyingTo ? { ...replyingTo } : null;
   const submittedAt = Date.now();
-  const pendingId   = 'p-' + (crypto.randomUUID ? crypto.randomUUID() : `${submittedAt}-${Math.random().toString(36).slice(2)}`);
   const submittedDraftId = currentDraftId;
   if (submittedDraftId) submittedDraftIds.add(submittedDraftId);
   if (draftSaveTimer) {
@@ -1438,8 +1444,27 @@ document.getElementById('postForm').addEventListener('submit', async e => {
     draftSaveTimer = null;
   }
 
-  const bubbleEl = createPendingBubble(pendingId, text, fileToSend, replyData);
-  pendingMessages.set(pendingId, { bubbleEl, formData: null, xhr: null, cancelled: false, submittedDraftId });
+  const items = files.length > 0
+    ? files.map((file, index) => ({
+        file,
+        text: index === 0 ? text : '',
+        replyData: index === 0 ? replyData : null,
+        submittedAt: submittedAt + index,
+      }))
+    : [{ file: null, text, replyData, submittedAt }];
+
+  const pendingIds = items.map(item => {
+    const pendingId = 'p-' + (crypto.randomUUID ? crypto.randomUUID() : `${item.submittedAt}-${Math.random().toString(36).slice(2)}`);
+    const bubbleEl = createPendingBubble(pendingId, item.text, item.file, item.replyData);
+    pendingMessages.set(pendingId, {
+      bubbleEl,
+      formData: null,
+      xhr: null,
+      cancelled: false,
+      submittedDraftId,
+    });
+    return pendingId;
+  });
 
   // Reset form immediately
   textInput.value = '';
@@ -1449,6 +1474,19 @@ document.getElementById('postForm').addEventListener('submit', async e => {
   collapseAttachmentPicker();
   updateButtonState();
   textInput.focus();
+
+  for (let i = 0; i < items.length; i++) {
+    await preparePendingUpload(pendingIds[i], items[i], {
+      viewOnce,
+      wantsBlur,
+      clearDraftOnSuccess: i === 0,
+    });
+  }
+});
+
+async function preparePendingUpload(pendingId, item, options) {
+  let fileToSend = item.file;
+  const { viewOnce, wantsBlur, clearDraftOnSuccess } = options;
 
   // Optional video compression
   const needsCompression = isVideoFile(fileToSend) && !fileToSend.isOptimized;
@@ -1489,6 +1527,7 @@ document.getElementById('postForm').addEventListener('submit', async e => {
     if (!entry || entry.cancelled) { removePendingBubble(pendingId); return; }
   }
 
+  const isBlurred = !!fileToSend && !isAudioFile(fileToSend) && wantsBlur;
   let blurPreviewFile = null;
   if (isBlurred && isVideoFile(fileToSend)) {
     setPendingLabel(pendingId, 'Preparing preview...');
@@ -1498,22 +1537,25 @@ document.getElementById('postForm').addEventListener('submit', async e => {
   }
 
   const formData = new FormData();
-  formData.append('text',        text);
+  formData.append('text',        item.text);
   formData.append('viewOnce',    String(viewOnce));
   formData.append('isBlurred',   String(isBlurred));
-  formData.append('submittedAt', String(submittedAt));
-  if (replyData) {
-    formData.append('replyUser', replyData.user);
-    formData.append('replyText', replyData.text);
-    if (replyData.id) formData.append('replyId', replyData.id);
+  formData.append('submittedAt', String(item.submittedAt));
+  if (item.replyData) {
+    formData.append('replyUser', item.replyData.user);
+    formData.append('replyText', item.replyData.text);
+    if (item.replyData.id) formData.append('replyId', item.replyData.id);
   }
   if (fileToSend) formData.append('image', fileToSend);
   if (blurPreviewFile) formData.append('blurPreview', blurPreviewFile);
 
   const entry = pendingMessages.get(pendingId);
-  if (entry) entry.formData = formData;
+  if (entry) {
+    entry.formData = formData;
+    entry.submittedDraftId = clearDraftOnSuccess ? entry.submittedDraftId : null;
+  }
   startPendingUpload(pendingId);
-});
+}
 
 // ── Pending bubble helpers ────────────────────────────────────────────────────
 
@@ -1938,8 +1980,9 @@ function handleInput() {
 }
 
 function handleImageSelect(e) {
-  const file = e.target.files[0];
-  if (!file) return;
+  const files = Array.from(e.target.files || []);
+  if (files.length === 0) return;
+  const file = files[0];
   currentDraftId = crypto.randomUUID
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -1950,6 +1993,9 @@ function handleImageSelect(e) {
 }
 
 function renderMediaPreview(file) {
+  const selectedCount = getSelectedMediaFiles().length;
+  const multipleFilesLabel = selectedCount > 1 ? `[ ${selectedCount} files selected ]` : '';
+
   if (previewAudio.src.startsWith('blob:')) URL.revokeObjectURL(previewAudio.src);
   previewAudio.pause();
   previewAudio.removeAttribute('src');
@@ -1968,7 +2014,7 @@ function renderMediaPreview(file) {
   } else if (isVideoFile(file)) {
     previewImg.style.display       = 'none';
     previewVideoText.style.display = 'block';
-    previewVideoText.innerText     = '[ Video ]';
+    previewVideoText.innerText     = multipleFilesLabel || '[ Video ]';
     previewAudio.style.display     = 'none';
     previewContainer.style.display = 'flex';
     scrollToBottom(true);
@@ -1980,6 +2026,10 @@ function renderMediaPreview(file) {
     previewAudio.style.display     = 'none';
     previewContainer.style.display = 'flex';
     previewImg.onload = () => scrollToBottom(true);
+  }
+  if (selectedCount > 1 && !isVideoFile(file)) {
+    previewVideoText.style.display = 'block';
+    previewVideoText.innerText = multipleFilesLabel;
   }
   updateButtonState();
 }
@@ -2012,9 +2062,9 @@ function clearPreview(options = {}) {
 
 function updateButtonState() {
   const hasText  = textInput.value.trim().length > 0;
-  const selectedMedia = getSelectedMediaFile();
-  const hasImage = !!selectedMedia;
-  const isAudio = isAudioFile(selectedMedia);
+  const selectedMediaFiles = getSelectedMediaFiles();
+  const hasImage = selectedMediaFiles.length > 0;
+  const allSelectedAudio = hasImage && selectedMediaFiles.every(file => isAudioFile(file));
   const canSend  = hasText || hasImage;
   sendBtn.disabled = !canSend;
   canSend ? sendBtn.classList.remove('is-disabled') : sendBtn.classList.add('is-disabled');
@@ -2023,16 +2073,16 @@ function updateButtonState() {
   const viewOnceLabel = document.getElementById('viewOnceLabel');
   const blurLabel = document.getElementById('blurLabel');
   const canViewOnce = hasMedia && appConfig.enableViewOnce !== false;
-  const canBlur = hasMedia && !isAudio && appConfig.enableBlur !== false;
+  const canBlur = hasMedia && selectedMediaFiles.some(file => !isAudioFile(file)) && appConfig.enableBlur !== false;
   const showMediaControls = canViewOnce || canBlur;
   previewContainer.classList.toggle('has-media-controls', showMediaControls);
   previewContainer.classList.toggle('can-view-once', canViewOnce);
   previewContainer.classList.toggle('can-blur', canBlur);
   if (mediaControlsRow) mediaControlsRow.removeAttribute('style');
   viewOnceLabel.removeAttribute('style');
-  viewOnceLabel.title = isAudio ? 'Listen Once' : 'View Once';
+  viewOnceLabel.title = allSelectedAudio ? 'Listen Once' : 'View Once';
   const viewOnceIcon = viewOnceLabel.querySelector('.media-toggle-icon');
-  if (viewOnceIcon) viewOnceIcon.textContent = isAudio ? '👂' : '👁️';
+  if (viewOnceIcon) viewOnceIcon.textContent = allSelectedAudio ? '👂' : '👁️';
   blurLabel.removeAttribute('style');
 }
 

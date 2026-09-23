@@ -18,6 +18,7 @@ A self-hosted, end-to-end encrypted two-person chat application built with **Nod
 - **Soft-delete** – deleted message content is retained for audit, access is removed
 - **View-once** images and videos
 - **Image blur** toggle (NSFW/sensitive media)
+- **Multi-file media picker** – selected files are queued and sent as separate messages
 - **In-app video recorder** with optional FFmpeg WASM compression
 - **Swipe-to-reply** and reply threading
 - **Typing indicator**
