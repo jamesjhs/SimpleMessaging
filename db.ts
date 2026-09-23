@@ -84,6 +84,7 @@ export async function initDb(): Promise<DB> {
       user_id      INTEGER NOT NULL REFERENCES users(id),
       text         TEXT,
       image_path   TEXT,
+      blur_preview_path TEXT,
       view_once    INTEGER NOT NULL DEFAULT 0,
       is_blurred   INTEGER NOT NULL DEFAULT 0,
       reply_to_id  TEXT,
@@ -163,6 +164,7 @@ export async function initDb(): Promise<DB> {
     `ALTER TABLE user_preferences ADD COLUMN push_enabled INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE reports ADD COLUMN reason TEXT`,
     `ALTER TABLE reports ADD COLUMN outcome_message TEXT`,
+    `ALTER TABLE messages ADD COLUMN blur_preview_path TEXT`,
   ]) {
     try { db.exec(sql); } catch { /* column already exists – safe to ignore */ }
   }

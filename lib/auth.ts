@@ -4,7 +4,7 @@
  */
 
 import crypto       from 'crypto';
-import nodemailer   from 'nodemailer';
+import nodemailer, { type Transporter } from 'nodemailer';
 import type { Request, Response, NextFunction } from 'express';
 import { getDb }    from '../db';
 import { getAppName } from './appName';
@@ -15,9 +15,9 @@ const OTP_TTL_MS     = 10 * 60 * 1000;           // 10 minutes
 
 // ── SMTP transport (lazy-initialised) ────────────────────────────────────────
 
-let _transport: nodemailer.Transporter | null = null;
+let _transport: Transporter | null = null;
 
-function getTransport(): nodemailer.Transporter {
+function getTransport(): Transporter {
   if (_transport) return _transport;
   _transport = nodemailer.createTransport({
     host:       process.env.SMTP_HOST,

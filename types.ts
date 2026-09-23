@@ -36,6 +36,7 @@ export interface DbMessage {
   user_id:      number;
   text:         string | null;
   image_path:   string | null;
+  blur_preview_path: string | null;
   view_once:    0 | 1;
   is_blurred:   0 | 1;
   reply_to_id:  string | null;
@@ -128,6 +129,7 @@ export interface ApiPost {
   user:      string;
   text:      string;
   imagePath: string | null;
+  blurPreviewPath: string | null;
   mediaType: 'image' | 'video' | 'audio' | null;
   viewOnce:  boolean;
   isBlurred: boolean;

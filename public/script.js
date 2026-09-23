@@ -3,7 +3,10 @@
 // ── State ────────────────────────────────────────────────────────────────────
 let currentUser    = null;   // display name of logged-in user
 let currentRole    = null;   // 'admin' | 'adult' | 'user'
-let appConfig      = {};     // server-supplied config
+let appConfig      = {
+  enableViewOnce: true,
+  enableBlur: true,
+};     // server-supplied config
 let enterToSend    = false;
 let pushPreferenceEnabled = false;
 let appInitialized = false;
@@ -889,6 +892,22 @@ function renderMessage(p, otherLastSeen, me, cfg) {
       }
     } else if (isAudio) {
       imageHtml = `<div class="voice-note-label">Voice message</div><audio src="${p.imagePath}" class="chat-audio" controls controlsList="nodownload" preload="metadata" oncontextmenu="return false"></audio>`;
+    } else if (p.isBlurred) {
+      const openOriginal = `showImagePopup(${escapeHtml(JSON.stringify(p.imagePath))})`;
+      if (p.blurPreviewPath) {
+        if (isVideo) {
+          imageHtml = `<div class="blurred-video-placeholder" onclick="${openOriginal}">
+            <img src="${escapeHtml(p.blurPreviewPath)}" class="chat-img clickable-img" alt="Blurred video preview">
+            <span class="video-play-badge">▶</span>
+          </div>`;
+        } else {
+          imageHtml = `<img src="${escapeHtml(p.blurPreviewPath)}" class="chat-img clickable-img blurred-placeholder" onclick="${openOriginal}" alt="Blurred image preview">`;
+        }
+      } else {
+        imageHtml = `<button type="button" class="blurred-media-placeholder ${isVideo ? 'video' : 'image'}" onclick="${openOriginal}">
+          ${isVideo ? 'Blurred video' : 'Blurred image'}
+        </button>`;
+      }
     } else if (isVideo) {
       imageHtml = `<video src="${p.imagePath}" class="chat-img ${blurClass}"
         controls controlsList="nodownload" preload="metadata" oncontextmenu="return false" playsinline
@@ -1108,6 +1127,71 @@ function getMediaReplyLabel(filePath, mediaType = null) {
   if (type === 'audio') return 'Voice message';
   if (type === 'video') return 'Video';
   return filePath ? 'Photo' : '';
+}
+
+function createBlurredVideoPreview(file) {
+  return new Promise(resolve => {
+    if (!file || !isVideoFile(file)) { resolve(null); return; }
+
+    const video = document.createElement('video');
+    const url = URL.createObjectURL(file);
+    let settled = false;
+    let timeoutId = null;
+
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      URL.revokeObjectURL(url);
+      resolve(value);
+    };
+
+    const capture = () => {
+      try {
+        const width = video.videoWidth || 240;
+        const height = video.videoHeight || 240;
+        const size = 240;
+        const scale = Math.max(size / width, size / height);
+        const drawW = width * scale;
+        const drawH = height * scale;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { finish(null); return; }
+        ctx.filter = 'blur(14px)';
+        ctx.drawImage(video, (size - drawW) / 2, (size - drawH) / 2, drawW, drawH);
+        canvas.toBlob(blob => {
+          finish(blob ? new File([blob], 'blur-preview.jpg', { type: 'image/jpeg' }) : null);
+        }, 'image/jpeg', 0.5);
+      } catch {
+        finish(null);
+      }
+    };
+
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
+    video.addEventListener('error', () => finish(null), { once: true });
+    video.addEventListener('loadeddata', () => {
+      try {
+        if (Number.isFinite(video.duration) && video.duration > 0.1) {
+          video.currentTime = Math.min(0.1, video.duration / 2);
+        } else {
+          capture();
+        }
+      } catch {
+        capture();
+      }
+    }, { once: true });
+    video.addEventListener('seeked', capture, { once: true });
+    timeoutId = setTimeout(() => finish(null), 4000);
+    video.src = url;
+    video.load();
+  });
 }
 
 function openDraftDb() {
@@ -1405,6 +1489,14 @@ document.getElementById('postForm').addEventListener('submit', async e => {
     if (!entry || entry.cancelled) { removePendingBubble(pendingId); return; }
   }
 
+  let blurPreviewFile = null;
+  if (isBlurred && isVideoFile(fileToSend)) {
+    setPendingLabel(pendingId, 'Preparing preview...');
+    blurPreviewFile = await createBlurredVideoPreview(fileToSend);
+    const entry = pendingMessages.get(pendingId);
+    if (!entry || entry.cancelled) { removePendingBubble(pendingId); return; }
+  }
+
   const formData = new FormData();
   formData.append('text',        text);
   formData.append('viewOnce',    String(viewOnce));
@@ -1416,6 +1508,7 @@ document.getElementById('postForm').addEventListener('submit', async e => {
     if (replyData.id) formData.append('replyId', replyData.id);
   }
   if (fileToSend) formData.append('image', fileToSend);
+  if (blurPreviewFile) formData.append('blurPreview', blurPreviewFile);
 
   const entry = pendingMessages.get(pendingId);
   if (entry) entry.formData = formData;
@@ -1869,7 +1962,7 @@ function renderMediaPreview(file) {
     previewVideoText.innerText     = '[ Voice message ]';
     previewAudio.src               = URL.createObjectURL(file);
     previewAudio.style.display     = 'block';
-    previewContainer.style.display = 'block';
+    previewContainer.style.display = 'flex';
     document.getElementById('blurInput').checked = false;
     scrollToBottom(true);
   } else if (isVideoFile(file)) {
@@ -1877,7 +1970,7 @@ function renderMediaPreview(file) {
     previewVideoText.style.display = 'block';
     previewVideoText.innerText     = '[ Video ]';
     previewAudio.style.display     = 'none';
-    previewContainer.style.display = 'block';
+    previewContainer.style.display = 'flex';
     scrollToBottom(true);
   } else {
     if (previewImg.src.startsWith('blob:')) URL.revokeObjectURL(previewImg.src);
@@ -1885,7 +1978,7 @@ function renderMediaPreview(file) {
     previewImg.style.display       = 'block';
     previewVideoText.style.display = 'none';
     previewAudio.style.display     = 'none';
-    previewContainer.style.display = 'block';
+    previewContainer.style.display = 'flex';
     previewImg.onload = () => scrollToBottom(true);
   }
   updateButtonState();
@@ -1926,12 +2019,21 @@ function updateButtonState() {
   sendBtn.disabled = !canSend;
   canSend ? sendBtn.classList.remove('is-disabled') : sendBtn.classList.add('is-disabled');
   const hasMedia = hasImage;
+  const mediaControlsRow = document.getElementById('media-controls-row');
   const viewOnceLabel = document.getElementById('viewOnceLabel');
-  viewOnceLabel.style.display = (hasMedia && appConfig.enableViewOnce) ? 'flex' : 'none';
+  const blurLabel = document.getElementById('blurLabel');
+  const canViewOnce = hasMedia && appConfig.enableViewOnce !== false;
+  const canBlur = hasMedia && !isAudio && appConfig.enableBlur !== false;
+  const showMediaControls = canViewOnce || canBlur;
+  previewContainer.classList.toggle('has-media-controls', showMediaControls);
+  previewContainer.classList.toggle('can-view-once', canViewOnce);
+  previewContainer.classList.toggle('can-blur', canBlur);
+  if (mediaControlsRow) mediaControlsRow.removeAttribute('style');
+  viewOnceLabel.removeAttribute('style');
   viewOnceLabel.title = isAudio ? 'Listen Once' : 'View Once';
-  const viewOnceText = viewOnceLabel.lastChild;
-  if (viewOnceText) viewOnceText.textContent = isAudio ? ' 👂' : ' 👁️';
-  document.getElementById('blurLabel').style.display = (hasMedia && !isAudio && appConfig.enableBlur) ? 'flex' : 'none';
+  const viewOnceIcon = viewOnceLabel.querySelector('.media-toggle-icon');
+  if (viewOnceIcon) viewOnceIcon.textContent = isAudio ? '👂' : '👁️';
+  blurLabel.removeAttribute('style');
 }
 
 function showAttachments(e) {
@@ -1943,6 +2045,69 @@ function showAttachments(e) {
   }
   expandAttachmentPicker();
   textInput.focus();
+}
+
+function getLocationErrorMessage(error) {
+  if (error && error.code === error.PERMISSION_DENIED) return 'Location permission was denied.';
+  if (error && error.code === error.POSITION_UNAVAILABLE) return 'Location is currently unavailable.';
+  if (error && error.code === error.TIMEOUT) return 'Location request timed out.';
+  return 'Unable to get location.';
+}
+
+function createGoogleMapsLocationUrl(latitude, longitude) {
+  return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(latitude + ',' + longitude);
+}
+
+function shareCurrentLocation() {
+  if (isObserverRole()) return;
+
+  const locationBtn = document.getElementById('share-location-btn');
+  collapseAttachmentPicker();
+
+  if (!navigator.geolocation) {
+    alert('Location is not available in this browser.');
+    return;
+  }
+
+  if (locationBtn) {
+    locationBtn.disabled = true;
+    locationBtn.textContent = '...';
+  }
+
+  navigator.geolocation.getCurrentPosition(
+    position => {
+      const latitude = Number(position.coords.latitude.toFixed(6));
+      const longitude = Number(position.coords.longitude.toFixed(6));
+      const mapsUrl = createGoogleMapsLocationUrl(latitude, longitude);
+      sendLocationMessage(mapsUrl).finally(() => {
+        if (locationBtn) {
+          locationBtn.disabled = false;
+          locationBtn.textContent = '📍';
+        }
+      });
+    },
+    error => {
+      alert(getLocationErrorMessage(error));
+      if (locationBtn) {
+        locationBtn.disabled = false;
+        locationBtn.textContent = '📍';
+      }
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 },
+  );
+}
+
+async function sendLocationMessage(mapsUrl) {
+  const submittedAt = Date.now();
+  const pendingId = 'p-' + (crypto.randomUUID ? crypto.randomUUID() : `${submittedAt}-${Math.random().toString(36).slice(2)}`);
+  const bubbleEl = createPendingBubble(pendingId, mapsUrl, null, null);
+  const formData = new FormData();
+  formData.append('text', mapsUrl);
+  formData.append('viewOnce', 'false');
+  formData.append('isBlurred', 'false');
+  formData.append('submittedAt', String(submittedAt));
+  pendingMessages.set(pendingId, { bubbleEl, formData, xhr: null, cancelled: false, submittedDraftId: null });
+  startPendingUpload(pendingId);
 }
 
 async function sendTypingStatus(status) {
@@ -1958,7 +2123,7 @@ async function sendTypingStatus(status) {
 
 function showImagePopup(filePath) {
   const vid    = document.getElementById('overlayVideo');
-  const isVideo= /\.(mp4|webm)$/i.test(filePath);
+  const isVideo= /\.(mp4|webm|mkv|mov)$/i.test(filePath);
   if (isVideo) {
     overlayImg.style.display = 'none';
     vid.style.display = 'block';
@@ -3478,10 +3643,39 @@ function escapeHtml(text) {
 
 function linkify(text) {
   if (!text) return '';
-  const escaped = escapeHtml(text);
-  return escaped.replace(/(https?:\/\/[^\s"'<>)]+)/g, url =>
-    `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`
-  );
+  const raw = String(text);
+  const urlRe = /https?:\/\/[^\s"'<>)]+/g;
+  let html = '';
+  let lastIndex = 0;
+  raw.replace(urlRe, (url, offset) => {
+    html += escapeHtml(raw.slice(lastIndex, offset));
+    const locationPreview = getGoogleMapsLocationPreview(url);
+    const className = locationPreview ? ' class="location-link"' : '';
+    html += `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"${className}>${escapeHtml(locationPreview || url)}</a>`;
+    lastIndex = offset + url.length;
+    return url;
+  });
+  html += escapeHtml(raw.slice(lastIndex));
+  return html;
+}
+
+function getGoogleMapsLocationPreview(url) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, '').toLowerCase();
+    if (host !== 'google.com' && host !== 'maps.google.com') return null;
+    const query = parsed.searchParams.get('query') || parsed.searchParams.get('q');
+    if (!query) return null;
+    const match = query.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
+    if (!match) return null;
+    const latitude = Number(match[1]);
+    const longitude = Number(match[2]);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+    return `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+  } catch {
+    return null;
+  }
 }
 
 // ── PWA registration ──────────────────────────────────────────────────────────

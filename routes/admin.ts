@@ -86,6 +86,7 @@ interface LegacyPost {
   user?:      string;
   text?:      string;
   imagePath?: string;
+  blurPreviewPath?: string;
   viewOnce?:  boolean;
   isBlurred?: boolean;
   replyId?:   string;
@@ -552,13 +553,14 @@ router.post('/import/commit', async (req: Request, res: Response): Promise<void>
     try {
       db.prepare(`
         INSERT INTO messages
-          (id, user_id, text, image_path, view_once, is_blurred,
+          (id, user_id, text, image_path, blur_preview_path, view_once, is_blurred,
            reply_to_id, reply_user, reply_text, created_at, submitted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         msgId, userId,
         p.text      ?? '',
         p.imagePath ?? null,
+        p.blurPreviewPath ?? null,
         p.viewOnce  ? 1 : 0,
         p.isBlurred ? 1 : 0,
         p.replyId   ?? null,

@@ -1,6 +1,6 @@
 {
   "name": "tls",
-  "version": "1.4.1",
+  "version": "1.6.1",
   "description": "TLS Secure Messaging – encrypted two-person chat",
   "main": "server.ts",
   "type": "commonjs",
@@ -11,25 +11,29 @@
     "typecheck": "tsc --noEmit"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "dependencies": {
-    "better-sqlite3-multiple-ciphers": "^12.9.0",
-    "dotenv": "^17.4.2",
+    "better-sqlite3-multiple-ciphers": "^13.0.3",
+    "dotenv": "^18.0.3",
     "express": "^5.2.1",
-    "multer": "^2.2.0",
-    "nodemailer": "^9.0.3",
-    "sharp": "^0.34.5",
+    "multer": "^2.4.0",
+    "nodemailer": "^10.0.10",
+    "sharp": "^0.35.4",
     "web-push": "^3.6.7"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/express": "^5.0.6",
-    "@types/multer": "^2.1.0",
-    "@types/node": "^25.6.0",
-    "@types/nodemailer": "^8.0.0",
+    "@types/multer": "^2.2.0",
+    "@types/node": "^26.6.2",
+    "@types/nodemailer": "^8.0.2",
     "@types/web-push": "^3.6.4",
-    "tsx": "^4.23.0",
-    "typescript": "^6.0.3"
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "allowScripts": {
+    "better-sqlite3-multiple-ciphers@13.0.3": true,
+    "esbuild@0.28.1": true
   }
 }

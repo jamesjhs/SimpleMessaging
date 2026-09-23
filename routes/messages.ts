@@ -165,6 +165,21 @@ const upload = multer({
   },
 });
 
+type UploadFiles = Partial<Record<'image' | 'blurPreview', Express.Multer.File[]>>;
+
+function getUploadedFiles(req: Request): UploadFiles {
+  return (req.files ?? {}) as UploadFiles;
+}
+
+async function writeBlurredImagePreview(buffer: Buffer, filepath: string): Promise<void> {
+  await sharp(buffer)
+    .rotate()
+    .resize(240, 240, { fit: 'cover', withoutEnlargement: true })
+    .blur(16)
+    .jpeg({ quality: 50 })
+    .toFile(filepath);
+}
+
 // ── Helper: DB row → API post object ─────────────────────────────────────────
 
 function rowToPost(row: DbMessage, viewer?: PostViewer): ApiPost {
@@ -214,6 +229,7 @@ function rowToPost(row: DbMessage, viewer?: PostViewer): ApiPost {
     user:      row.display_name ?? '',
     text:      outcomeText || (hiddenForNormal ? 'Message flagged' : row.text ?? ''),
     imagePath,
+    blurPreviewPath: !hiddenForNormal && row.is_blurred === 1 ? row.blur_preview_path ?? null : null,
     mediaType: getMediaTypeFromPath(imagePath),
     viewOnce:  !hiddenForNormal && row.view_once  === 1,
     isBlurred: !hiddenForNormal && row.is_blurred === 1,
@@ -339,7 +355,10 @@ router.post(
   '/messages',
   requireAuth,
   rateLimiter({ windowMs: 60_000, max: 30, message: 'Sending too fast. Please slow down.' }),
-  upload.single('image'),
+  upload.fields([
+    { name: 'image', maxCount: 1 },
+    { name: 'blurPreview', maxCount: 1 },
+  ]),
   async (req: Request, res: Response): Promise<void> => {
     if (isObserverRole(req.user!.role)) {
       res.status(403).json({ error: 'Observer accounts cannot send chat messages' });
@@ -348,9 +367,13 @@ router.post(
 
     const { text, viewOnce, isBlurred, replyUser, replyText, replyId, submittedAt } =
       (req.body ?? {}) as Record<string, string | undefined>;
+    const files = getUploadedFiles(req);
+    const mediaFile = files.image?.[0] ?? null;
+    const clientBlurPreview = files.blurPreview?.[0] ?? null;
+    const wantsBlur = isBlurred === 'true';
 
     const hasText  = !!text && text.trim() !== '';
-    const hasMedia = !!req.file;
+    const hasMedia = !!mediaFile;
 
     if (!hasText && !hasMedia) {
       res.status(400).json({ error: 'Post content required' });
@@ -358,9 +381,10 @@ router.post(
     }
 
     let imagePath: string | null = null;
+    let blurPreviewPath: string | null = null;
 
-    if (req.file) {
-      const baseMime = req.file.mimetype.split(';')[0];
+    if (mediaFile) {
+      const baseMime = mediaFile.mimetype.split(';')[0];
       const isVideo  = baseMime.startsWith('video/');
       const isAudio  = baseMime.startsWith('audio/');
       const ext      = isVideo
@@ -372,21 +396,35 @@ router.post(
                 : baseMime.includes('mp4') ? '.m4a'
                   : '.weba'
           : '.jpg';
-      const filename = `${crypto.randomUUID()}${ext}`;
+      const idBase = crypto.randomUUID();
+      const filename = `${idBase}${ext}`;
       const filepath = path.join(UPLOADS_DIR, filename);
 
       try {
         if (isVideo || isAudio) {
-          fs.writeFileSync(filepath, req.file.buffer);
+          fs.writeFileSync(filepath, mediaFile.buffer);
         } else {
           const imageMaxDimension = parseInt(getMediaSetting('image_max_dimension'), 10);
-          await sharp(req.file.buffer)
+          await sharp(mediaFile.buffer)
             .rotate()
             .resize(imageMaxDimension, imageMaxDimension, { fit: 'inside', withoutEnlargement: true })
             .toFormat('jpeg')
             .jpeg({ quality: 85 })
             .withMetadata()
             .toFile(filepath);
+          if (wantsBlur) {
+            const previewFilename = `${idBase}.blur.jpg`;
+            await writeBlurredImagePreview(mediaFile.buffer, path.join(UPLOADS_DIR, previewFilename));
+            blurPreviewPath = `/uploads/${previewFilename}`;
+          }
+        }
+        if (wantsBlur && isVideo && clientBlurPreview) {
+          const previewMime = clientBlurPreview.mimetype.split(';')[0];
+          if (previewMime.startsWith('image/')) {
+            const previewFilename = `${idBase}.blur.jpg`;
+            await writeBlurredImagePreview(clientBlurPreview.buffer, path.join(UPLOADS_DIR, previewFilename));
+            blurPreviewPath = `/uploads/${previewFilename}`;
+          }
         }
         imagePath = `/uploads/${filename}`;
       } catch (err) {
@@ -405,16 +443,17 @@ router.post(
     const id = crypto.randomUUID();
     getDb().prepare(`
       INSERT INTO messages
-        (id, user_id, text, image_path, view_once, is_blurred,
+        (id, user_id, text, image_path, blur_preview_path, view_once, is_blurred,
          reply_to_id, reply_user, reply_text, created_at, submitted_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       req.user!.id,
       text?.trim() ?? '',
       imagePath,
+      blurPreviewPath,
       viewOnce  === 'true' ? 1 : 0,
-      isBlurred === 'true' ? 1 : 0,
+      wantsBlur ? 1 : 0,
       (replyId && replyId !== 'undefined') ? replyId : null,
       replyUser ?? null,
       replyText ?? null,
