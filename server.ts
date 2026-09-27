@@ -74,10 +74,57 @@ function isUnsafeMethod(method: string): boolean {
   return !['GET', 'HEAD', 'OPTIONS'].includes(method);
 }
 
-function getExpectedOrigin(req: Request): string | null {
+function getFirstHeaderValue(value: string | undefined): string | null {
+  return value?.split(',')[0]?.trim() || null;
+}
+
+function getCloudflareVisitorScheme(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as { scheme?: unknown };
+    return typeof parsed.scheme === 'string' ? parsed.scheme : null;
+  } catch {
+    return null;
+  }
+}
+
+function addOrigin(origins: Set<string>, protocol: string | null | undefined, host: string | null | undefined): void {
+  if (!protocol || !host) return;
+  const normalizedProtocol = protocol.replace(/:$/, '').toLowerCase();
+  if (normalizedProtocol !== 'http' && normalizedProtocol !== 'https') return;
+  origins.add(`${normalizedProtocol}://${host.toLowerCase()}`);
+}
+
+function addUrlOrigin(origins: Set<string>, value: string | undefined): void {
+  const trimmed = value?.trim();
+  if (!trimmed) return;
+  try {
+    origins.add(new URL(trimmed).origin.toLowerCase());
+  } catch {
+    console.warn('[server] ignoring invalid APP_URL:', trimmed);
+  }
+}
+
+function getAllowedOrigins(req: Request): Set<string> {
+  const origins = new Set<string>();
   const host = req.get('host');
-  if (!host) return null;
-  return `${req.protocol}://${host}`;
+  const forwardedHost = getFirstHeaderValue(req.get('x-forwarded-host'));
+  const forwardedProto = getFirstHeaderValue(req.get('x-forwarded-proto'));
+  const cfScheme = getCloudflareVisitorScheme(req.get('cf-visitor'));
+
+  addUrlOrigin(origins, process.env.APP_URL);
+  addOrigin(origins, req.protocol, host);
+  addOrigin(origins, forwardedProto, forwardedHost ?? host);
+  addOrigin(origins, cfScheme, forwardedHost ?? host);
+  return origins;
+}
+
+function isAllowedOrigin(value: string, allowedOrigins: Set<string>): boolean {
+  try {
+    return allowedOrigins.has(new URL(value).origin.toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 // ── Security / CORS headers ────────────────────────────────────────────────────
@@ -127,22 +174,17 @@ app.use((req: Request, res: Response, next: NextFunction): void => {
     return;
   }
 
-  const expected = getExpectedOrigin(req);
+  const allowedOrigins = getAllowedOrigins(req);
   const origin = req.get('origin');
-  if (origin && expected && origin !== expected) {
+  if (origin && allowedOrigins.size > 0 && !isAllowedOrigin(origin, allowedOrigins)) {
     res.status(403).json({ error: 'Invalid request origin' });
     return;
   }
 
   if (!origin) {
     const referer = req.get('referer');
-    if (referer && expected) {
-      try {
-        if (new URL(referer).origin !== expected) {
-          res.status(403).json({ error: 'Invalid request referer' });
-          return;
-        }
-      } catch {
+    if (referer && allowedOrigins.size > 0) {
+      if (!isAllowedOrigin(referer, allowedOrigins)) {
         res.status(403).json({ error: 'Invalid request referer' });
         return;
       }
