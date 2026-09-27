@@ -27,6 +27,7 @@ export interface DbUser {
 export interface DbSession {
   token:      string;
   user_id:    number;
+  csrf_token: string;
   created_at: number;
   expires_at: number;
 }

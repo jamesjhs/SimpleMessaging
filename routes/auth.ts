@@ -8,6 +8,7 @@ import { getDb, hashPassword, verifyPassword } from '../db';
 import {
   createSession,
   destroySession,
+  getCsrfTokenForSession,
   parseCookies,
   requireAuth,
   createOtp,
@@ -17,6 +18,7 @@ import {
 } from '../lib/auth';
 import { getAppName } from '../lib/appName';
 import { rateLimiter } from '../lib/rateLimiter';
+import { getPasswordPolicyError } from '../lib/passwordPolicy';
 import type { DbUser } from '../types';
 
 const router = Router();
@@ -127,9 +129,11 @@ router.post(
   }
 
   // No 2FA – create session immediately
-  createSession(user.id, req, res);
+  const sessionToken = createSession(user.id, req, res);
+  const csrfToken = getCsrfTokenForSession(sessionToken);
   res.json({
     status: user.force_password_change ? 'change_password' : 'ok',
+    csrfToken,
     user:   { displayName: user.display_name, role: user.role },
   });
   },
@@ -160,17 +164,25 @@ router.post(
     return;
   }
 
-  createSession(user.id, req, res);
+  const sessionToken = createSession(user.id, req, res);
+  const csrfToken = getCsrfTokenForSession(sessionToken);
   res.json({
     status: user.force_password_change ? 'change_password' : 'ok',
+    csrfToken,
     user:   { displayName: user.display_name, role: user.role },
   });
   },
 );
 
+// ── GET /api/auth/csrf ───────────────────────────────────────────────────────
+
+router.get('/csrf', requireAuth, (req: Request, res: Response): void => {
+  res.json({ csrfToken: getCsrfTokenForSession(req.sessionToken) });
+});
+
 // ── POST /api/auth/logout ─────────────────────────────────────────────────────
 
-router.post('/logout', (req: Request, res: Response): void => {
+router.post('/logout', requireAuth, (req: Request, res: Response): void => {
   const cookies = parseCookies(req);
   destroySession(cookies.session, req, res);
   res.sendStatus(204);
@@ -192,8 +204,9 @@ router.post(
     res.status(400).json({ error: 'currentPassword and newPassword required' });
     return;
   }
-  if (newPassword.length < 8) {
-    res.status(400).json({ error: 'Password must be at least 8 characters' });
+  const policyError = getPasswordPolicyError(newPassword);
+  if (policyError) {
+    res.status(400).json({ error: policyError });
     return;
   }
 
@@ -210,6 +223,8 @@ router.post(
   const hash = await hashPassword(newPassword);
   db.prepare('UPDATE users SET password_hash = ?, force_password_change = 0 WHERE id = ?')
     .run(hash, user.id);
+  db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?')
+    .run(user.id, req.sessionToken ?? '');
 
   res.json({ status: 'ok' });
   },

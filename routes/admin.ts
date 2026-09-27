@@ -16,6 +16,7 @@ import { COLOUR_SCHEME_IDS, parseAvailableColourSchemes } from '../lib/colourSch
 import { getAppName, getMainHeader }                   from '../lib/appName';
 import { FONT_OPTION_IDS, normalizeFontOption }         from '../lib/fontOptions';
 import { MEDIA_SETTING_KEYS, MEDIA_SETTING_OPTIONS, normalizeMediaSetting } from '../lib/mediaSettings';
+import { getPasswordPolicyError }                  from '../lib/passwordPolicy';
 import type { DbUser, UserRole }                       from '../types';
 
 const router  = Router();
@@ -24,6 +25,11 @@ const imageUp = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 
 const publicDir = path.join(__dirname, '..', 'public');
 const pwaIconSizes = [72, 96, 128, 144, 152, 180, 192, 384, 512] as const;
 const MIN_SITE_TITLE_LENGTH = 2;
+const MAX_IMPORT_POSTS = 10_000;
+const MAX_IMPORTED_TEXT_LENGTH = 10_000;
+const MAX_IMPORTED_NAME_LENGTH = 120;
+const MESSAGE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UPLOAD_PATH_RE = /^\/uploads\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?:\.blur)?\.(?:jpg|jpeg|png|gif|webp|mp4|webm|mkv|mov|weba|mp3|ogg|wav|m4a|aac)$/i;
 
 function hasVapidConfiguration(): boolean {
   return Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
@@ -31,6 +37,57 @@ function hasVapidConfiguration(): boolean {
 
 function normalizeRole(role: unknown): UserRole {
   return role === 'admin' || role === 'adult' ? role : 'user';
+}
+
+function cleanImportedString(value: unknown, maxLength: number): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const trimmed = String(value).trim();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, maxLength);
+}
+
+function normalizeImportedPath(value: unknown): string | undefined {
+  const pathValue = cleanImportedString(value, 512);
+  if (!pathValue) return undefined;
+  if (!UPLOAD_PATH_RE.test(pathValue)) {
+    throw new Error(`Invalid imported media path: ${pathValue}`);
+  }
+  return pathValue;
+}
+
+function normalizeLegacyPost(raw: unknown): LegacyPost {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('Each imported post must be an object');
+  }
+  const p = raw as Record<string, unknown>;
+  const id = cleanImportedString(p.id, 80);
+  const replyId = cleanImportedString(p.replyId, 80);
+  if (id && !MESSAGE_ID_RE.test(id)) throw new Error(`Invalid imported message id: ${id}`);
+  if (replyId && !MESSAGE_ID_RE.test(replyId)) throw new Error(`Invalid imported reply id: ${replyId}`);
+
+  const createdAt = p.createdAt === undefined || p.createdAt === null
+    ? undefined
+    : Number(p.createdAt);
+  if (createdAt !== undefined && (!Number.isFinite(createdAt) || createdAt < 0 || createdAt > Date.now() + 24 * 60 * 60 * 1000)) {
+    throw new Error('Invalid imported createdAt timestamp');
+  }
+
+  return {
+    id,
+    user: cleanImportedString(p.user, MAX_IMPORTED_NAME_LENGTH),
+    text: cleanImportedString(p.text, MAX_IMPORTED_TEXT_LENGTH) ?? '',
+    imagePath: normalizeImportedPath(p.imagePath),
+    blurPreviewPath: normalizeImportedPath(p.blurPreviewPath),
+    viewOnce: p.viewOnce === true,
+    isBlurred: p.isBlurred === true,
+    replyId,
+    replyUser: cleanImportedString(p.replyUser, MAX_IMPORTED_NAME_LENGTH),
+    replyText: cleanImportedString(p.replyText, MAX_IMPORTED_TEXT_LENGTH),
+    createdAt,
+    seenBy: Array.isArray(p.seenBy)
+      ? p.seenBy.map(n => cleanImportedString(n, MAX_IMPORTED_NAME_LENGTH)).filter((n): n is string => Boolean(n))
+      : [],
+  };
 }
 
 async function writePwaIcons(buffer: Buffer): Promise<string> {
@@ -97,6 +154,20 @@ interface LegacyPost {
   seenBy?:    string[];
 }
 
+interface ExportMessageRow {
+  id: string;
+  user: string;
+  text: string | null;
+  image_path: string | null;
+  blur_preview_path: string | null;
+  view_once: 0 | 1;
+  is_blurred: 0 | 1;
+  reply_to_id: string | null;
+  reply_user: string | null;
+  reply_text: string | null;
+  created_at: number;
+}
+
 const importPreviews = new Map<string, { posts: LegacyPost[]; expiresAt: number }>();
 
 // Purge stale previews every 5 minutes
@@ -133,6 +204,11 @@ router.post('/users', async (req: Request, res: Response): Promise<void> => {
     res.status(400).json({ error: 'username, displayName and password required' });
     return;
   }
+  const policyError = getPasswordPolicyError(password);
+  if (policyError) {
+    res.status(400).json({ error: policyError });
+    return;
+  }
 
   const safeRole = normalizeRole(role);
   const db = getDb();
@@ -163,16 +239,18 @@ router.patch('/users/:id', async (req: Request, res: Response): Promise<void> =>
 
   const updates: string[] = [];
   const vals:    unknown[] = [];
+  let revokeSessions = false;
 
   if (displayName         !== undefined) { updates.push('display_name = ?');          vals.push(String(displayName)); }
   if (email               !== undefined) { updates.push('email = ?');                  vals.push((email as string) || null); }
-  if (role                !== undefined) { updates.push('role = ?');                   vals.push(normalizeRole(role)); }
-  if (enabled             !== undefined) { updates.push('enabled = ?');                vals.push(enabled ? 1 : 0); }
-  if (twoFaEnabled        !== undefined) { updates.push('two_fa_enabled = ?');         vals.push(twoFaEnabled ? 1 : 0); }
-  if (forcePasswordChange !== undefined) { updates.push('force_password_change = ?'); vals.push(forcePasswordChange ? 1 : 0); }
+  if (role                !== undefined) { updates.push('role = ?');                   vals.push(normalizeRole(role)); revokeSessions = true; }
+  if (enabled             !== undefined) { updates.push('enabled = ?');                vals.push(enabled ? 1 : 0); revokeSessions = true; }
+  if (twoFaEnabled        !== undefined) { updates.push('two_fa_enabled = ?');         vals.push(twoFaEnabled ? 1 : 0); revokeSessions = true; }
+  if (forcePasswordChange !== undefined) { updates.push('force_password_change = ?'); vals.push(forcePasswordChange ? 1 : 0); revokeSessions = true; }
   if (loginLocked !== undefined) {
     updates.push('login_locked = ?');
     vals.push(loginLocked ? 1 : 0);
+    revokeSessions = true;
     if (!loginLocked) {
       // Reset failure counters when admin unlocks the account
       updates.push('failed_login_attempts = ?');
@@ -182,15 +260,25 @@ router.patch('/users/:id', async (req: Request, res: Response): Promise<void> =>
     }
   }
   if (newPassword) {
-    const hash = await hashPassword(String(newPassword));
+    const password = String(newPassword);
+    const policyError = getPasswordPolicyError(password);
+    if (policyError) {
+      res.status(400).json({ error: policyError });
+      return;
+    }
+    const hash = await hashPassword(password);
     updates.push('password_hash = ?');
     vals.push(hash);
+    revokeSessions = true;
   }
 
   if (updates.length === 0) { res.status(400).json({ error: 'No fields to update' }); return; }
 
   vals.push(req.params.id);
   db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...vals);
+  if (revokeSessions) {
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(req.params.id);
+  }
   res.sendStatus(204);
 });
 
@@ -213,6 +301,7 @@ router.delete('/users/:id', (req: Request, res: Response): void => {
 
   // Soft-disable rather than hard-delete to preserve message history
   db.prepare('UPDATE users SET enabled = 0 WHERE id = ?').run(req.params.id);
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(req.params.id);
   res.sendStatus(204);
 });
 
@@ -423,8 +512,10 @@ router.post('/import/preview', jsonUp.single('file'), (req: Request, res: Respon
 
   let posts: LegacyPost[];
   try {
-    posts = JSON.parse(req.file.buffer.toString('utf8')) as LegacyPost[];
-    if (!Array.isArray(posts)) throw new Error('Expected a JSON array');
+    const parsed = JSON.parse(req.file.buffer.toString('utf8')) as unknown;
+    if (!Array.isArray(parsed)) throw new Error('Expected a JSON array');
+    if (parsed.length > MAX_IMPORT_POSTS) throw new Error(`Import contains too many posts (max ${MAX_IMPORT_POSTS})`);
+    posts = parsed.map(normalizeLegacyPost);
   } catch (err) {
     res.status(400).json({ error: `Invalid JSON: ${(err as Error).message}` });
     return;
@@ -468,6 +559,55 @@ router.post('/import/preview', jsonUp.single('file'), (req: Request, res: Respon
     uniqueNames:  nameSuggestions,
     existingUsers: existingUsers.map(u => ({ id: u.id, display_name: u.display_name, username: u.username })),
   });
+});
+
+// ── GET /api/admin/export/posts ──────────────────────────────────────────────
+
+router.get('/export/posts', (_req: Request, res: Response): void => {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT m.id, u.display_name AS user, m.text, m.image_path, m.blur_preview_path,
+           m.view_once, m.is_blurred, m.reply_to_id, m.reply_user, m.reply_text, m.created_at
+    FROM messages m
+    JOIN users u ON u.id = m.user_id
+    WHERE m.deleted_at IS NULL
+    ORDER BY m.created_at ASC
+  `).all() as ExportMessageRow[];
+
+  const seenRows = db.prepare(`
+    SELECT mv.message_id, u.display_name
+    FROM message_views mv
+    JOIN users u ON u.id = mv.user_id
+    ORDER BY mv.viewed_at ASC
+  `).all() as Array<{ message_id: string; display_name: string }>;
+
+  const seenBy = new Map<string, string[]>();
+  for (const row of seenRows) {
+    const names = seenBy.get(row.message_id) ?? [];
+    names.push(row.display_name);
+    seenBy.set(row.message_id, names);
+  }
+
+  const posts: LegacyPost[] = rows.map(row => ({
+    id: row.id,
+    user: row.user,
+    text: row.text ?? '',
+    imagePath: row.image_path ?? undefined,
+    blurPreviewPath: row.blur_preview_path ?? undefined,
+    viewOnce: row.view_once === 1,
+    isBlurred: row.is_blurred === 1,
+    replyId: row.reply_to_id ?? undefined,
+    replyUser: row.reply_user ?? undefined,
+    replyText: row.reply_text ?? undefined,
+    createdAt: row.created_at,
+    seenBy: seenBy.get(row.id) ?? [],
+  }));
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="posts-${stamp}.json"`);
+  res.send(JSON.stringify(posts, null, 2));
 });
 
 // ── POST /api/admin/import/commit ─────────────────────────────────────────────

@@ -1,6 +1,7 @@
 'use strict';
 
 let adminSettingsMeta = { vapidConfigured: false };
+let csrfToken = null;
 
 const COLOUR_SCHEME_CATALOG = {
   default: { name: 'Default', bg: '#2c2c2c', mine: '#206123', theirs: '#215e6d' },
@@ -43,7 +44,7 @@ function showSection(name) {
   document.querySelectorAll('.admin-section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
   document.getElementById(`section-${name}`).classList.add('active');
-  document.querySelector(`.nav-tab[onclick="showSection('${name}')"]`).classList.add('active');
+  document.querySelector(`.nav-tab[data-section="${CSS.escape(name)}"]`).classList.add('active');
 
   if (name === 'users')    loadUsers();
   if (name === 'reports')  loadReports();
@@ -51,14 +52,27 @@ function showSection(name) {
 }
 
 async function logout() {
-  await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+  await apiFetch('/api/auth/logout', { method: 'POST' });
   window.location.href = '/';
 }
 
 // ── API helper ────────────────────────────────────────────────────────────────
 
 function apiFetch(url, options = {}) {
-  return fetch(url, { credentials: 'same-origin', ...options });
+  const method = String(options.method || 'GET').toUpperCase();
+  const headers = new Headers(options.headers || {});
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken) {
+    headers.set('X-CSRF-Token', csrfToken);
+  }
+  return fetch(url, { credentials: 'same-origin', ...options, headers });
+}
+
+async function refreshCsrfToken() {
+  const res = await fetch('/api/auth/csrf', { credentials: 'same-origin' });
+  if (!res.ok) return false;
+  const data = await res.json();
+  csrfToken = data.csrfToken || null;
+  return !!csrfToken;
 }
 
 async function loadAdminShellName() {
@@ -69,7 +83,7 @@ async function loadAdminShellName() {
     const appName = (config.siteTitle || 'Messaging').trim() || 'Messaging';
     document.title = `${appName} - Admin Panel`;
     const brand = document.getElementById('admin-nav-brand');
-    if (brand) brand.textContent = `← ${appName}`;
+    if (brand) brand.textContent = appName;
   } catch { /* keep static fallback */ }
 }
 
@@ -150,10 +164,10 @@ async function loadUsers() {
       </td>
       <td>${fmtDate(u.last_seen)}</td>
       <td>
-        <button class="btn-sm btn-edit"   onclick="openEditUser(${u.id})">Edit</button>
-        <button class="btn-sm btn-danger" onclick="disableUser(${u.id})" ${!u.enabled ? 'disabled' : ''}>Disable</button>
-        ${u.login_locked ? `<button class="btn-sm btn-unlock" onclick="unlockUser(${u.id})">Unlock</button>` : ''}
-        ${u.email ? `<button class="btn-sm btn-invite" onclick="quickInvite(${u.id})">Invite</button>` : ''}
+        <button class="btn-sm btn-edit" data-action="edit-user" data-user-id="${u.id}">Edit</button>
+        <button class="btn-sm btn-danger" data-action="disable-user" data-user-id="${u.id}" ${!u.enabled ? 'disabled' : ''}>Disable</button>
+        ${u.login_locked ? `<button class="btn-sm btn-unlock" data-action="unlock-user" data-user-id="${u.id}">Unlock</button>` : ''}
+        ${u.email ? `<button class="btn-sm btn-invite" data-action="quick-invite" data-user-id="${u.id}">Invite</button>` : ''}
       </td>
     `;
     tbody.appendChild(tr);
@@ -334,7 +348,7 @@ async function loadReports() {
       </td>
       <td>
         ${!r.reviewed
-          ? `<button class="btn-sm btn-edit" onclick="reviewReport(${r.id})">Mark Hidden</button>`
+          ? `<button class="btn-sm btn-edit" data-action="review-report" data-report-id="${r.id}">Mark Hidden</button>`
           : '—'}
       </td>
     `;
@@ -347,9 +361,10 @@ function renderReportMessage(r) {
   if (r.message_text) {
     parts.push(`<div class="report-message-text">${linkifyAdmin(r.message_text)}</div>`);
   }
-  if (r.image_path) {
-    const path = esc(r.image_path);
-    const isVideo = /\.(mp4|webm)$/i.test(r.image_path);
+  const mediaPath = safeMediaPath(r.image_path);
+  if (mediaPath) {
+    const path = esc(mediaPath);
+    const isVideo = /\.(mp4|webm)$/i.test(mediaPath);
     parts.push(isVideo
       ? `<video class="report-media" src="${path}" controls preload="metadata"></video>`
       : `<a href="${path}" target="_blank" rel="noopener noreferrer"><img class="report-media" src="${path}" alt="Reported media"></a>`);
@@ -470,6 +485,41 @@ async function saveSettings(e) {
 
 let importPreviewToken  = null;
 let importExistingUsers = [];
+
+function getDownloadFilename(response) {
+  const disposition = response.headers.get('content-disposition') || '';
+  const match = disposition.match(/filename="([^"]+)"/i) || disposition.match(/filename=([^;]+)/i);
+  return match ? match[1].trim() : `posts-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+}
+
+async function exportPosts() {
+  setError('export-error', '');
+  const btn = document.getElementById('export-posts-btn');
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await apiFetch('/api/admin/export/posts');
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError('export-error', data.error || 'Export failed.');
+      return;
+    }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = getDownloadFilename(res);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch {
+    setError('export-error', 'Export failed.');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
 
 async function previewImport(e) {
   e.preventDefault();
@@ -602,14 +652,53 @@ function linkifyAdmin(text) {
   );
 }
 
+function safeMediaPath(filePath) {
+  const value = String(filePath || '');
+  return /^\/uploads\/[0-9a-f-]+(?:\.blur)?\.(?:jpg|jpeg|png|gif|webp|mp4|webm|mkv|mov|weba|mp3|ogg|wav|m4a|aac)$/i.test(value)
+    ? value
+    : '';
+}
+
 // Close modal on outside click
 document.getElementById('user-modal').addEventListener('click', e => {
   if (e.target === document.getElementById('user-modal')) closeUserModal();
+});
+
+document.querySelectorAll('.nav-tab[data-section]').forEach(tab => {
+  tab.addEventListener('click', () => showSection(tab.dataset.section));
+});
+
+document.getElementById('admin-logout-btn')?.addEventListener('click', logout);
+document.getElementById('new-user-btn')?.addEventListener('click', openCreateUser);
+document.getElementById('settings-form')?.addEventListener('submit', saveSettings);
+document.getElementById('import-form')?.addEventListener('submit', previewImport);
+document.getElementById('user-form')?.addEventListener('submit', saveUser);
+document.getElementById('upload-icon-btn')?.addEventListener('click', uploadIcon);
+document.getElementById('export-posts-btn')?.addEventListener('click', exportPosts);
+document.getElementById('commit-import-btn')?.addEventListener('click', commitImport);
+document.querySelectorAll('.reset-import-btn').forEach(btn => btn.addEventListener('click', resetImport));
+document.getElementById('close-user-modal-btn')?.addEventListener('click', closeUserModal);
+document.getElementById('invite-btn')?.addEventListener('click', sendInvite);
+
+document.addEventListener('click', e => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+
+  const userId = btn.dataset.userId ? Number(btn.dataset.userId) : null;
+  const reportId = btn.dataset.reportId ? Number(btn.dataset.reportId) : null;
+  if (btn.dataset.action === 'edit-user' && userId) openEditUser(userId);
+  if (btn.dataset.action === 'disable-user' && userId) disableUser(userId);
+  if (btn.dataset.action === 'unlock-user' && userId) unlockUser(userId);
+  if (btn.dataset.action === 'quick-invite' && userId) quickInvite(userId);
+  if (btn.dataset.action === 'review-report' && reportId) reviewReport(reportId);
 });
 
 const adminPwaToggle = document.getElementById('pwa-enabled-toggle');
 if (adminPwaToggle) adminPwaToggle.addEventListener('change', updatePushSettingsUi);
 
 // Load users on page open
-loadAdminShellName();
-loadUsers();
+(async () => {
+  await refreshCsrfToken();
+  loadAdminShellName();
+  loadUsers();
+})();

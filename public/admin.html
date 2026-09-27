@@ -8,14 +8,14 @@
 </head>
 <body>
   <nav class="admin-nav">
-    <a href="/" class="nav-brand" id="admin-nav-brand">← Messaging</a>
+    <span class="nav-brand" id="admin-nav-brand">Messaging</span>
     <div class="nav-tabs">
-      <button class="nav-tab active" onclick="showSection('users')">👥 Users</button>
-      <button class="nav-tab" onclick="showSection('reports')">🚨 Reports</button>
-      <button class="nav-tab" onclick="showSection('settings')">⚙️ Settings</button>
-      <button class="nav-tab" onclick="showSection('import')">📥 Import</button>
+      <button class="nav-tab active" data-section="users">👥 Users</button>
+      <button class="nav-tab" data-section="reports">🚨 Reports</button>
+      <button class="nav-tab" data-section="settings">⚙️ Settings</button>
+      <button class="nav-tab" data-section="import">📥 Import / Export</button>
     </div>
-    <button class="nav-logout" onclick="logout()">Logout</button>
+    <button class="nav-logout" id="admin-logout-btn">Logout</button>
   </nav>
 
   <div class="admin-content">
@@ -24,7 +24,7 @@
     <section id="section-users" class="admin-section active">
       <div class="section-header">
         <h2>User Management</h2>
-        <button class="btn-primary" onclick="openCreateUser()">+ New User</button>
+        <button class="btn-primary" id="new-user-btn">+ New User</button>
       </div>
       <div id="users-error" class="error-msg"></div>
       <div class="table-wrap">
@@ -62,7 +62,7 @@
     <section id="section-settings" class="admin-section">
       <div class="section-header"><h2>App Settings</h2></div>
       <div id="settings-error" class="error-msg"></div>
-      <form id="settings-form" onsubmit="saveSettings(event)">
+      <form id="settings-form">
         <div class="settings-grid">
           <label>Site Title</label>
           <input type="text" name="site_title" placeholder="Messaging" minlength="2">
@@ -173,7 +173,7 @@
               <input type="file" id="icon-file" accept="image/*">
               <span>Choose image…</span>
             </label>
-            <button type="button" class="btn-secondary" onclick="uploadIcon()" style="margin-top:6px;display:block;">Upload Icon</button>
+            <button type="button" id="upload-icon-btn" class="btn-secondary" style="margin-top:6px;display:block;">Upload Icon</button>
             <span id="icon-upload-msg" style="color:#4caf50;font-size:0.8rem;margin-top:4px;display:none;"></span>
           </div>
         </div>
@@ -182,9 +182,20 @@
       </form>
     </section>
 
-    <!-- ── Import section ────────────────────────────────────── -->
+    <!-- ── Import / Export section ───────────────────────────── -->
     <section id="section-import" class="admin-section">
-      <div class="section-header"><h2>Import Historical Messages</h2></div>
+      <div class="section-header"><h2>Import / Export Historical Messages</h2></div>
+
+      <div id="export-panel" style="margin-bottom:24px;">
+        <p class="help-text">
+          Download the current message history as a <code>posts.json</code>-compatible file.
+          The exported file can be imported again using the workflow below.
+        </p>
+        <div id="export-error" class="error-msg"></div>
+        <button type="button" id="export-posts-btn" class="btn-primary">Export JSON</button>
+      </div>
+
+      <hr style="border-color:#555;margin:20px 0;">
 
       <!-- Step 1: File upload + parse -->
       <div id="import-step-1">
@@ -194,7 +205,7 @@
           Images/videos referenced as paths in <code>./uploads/</code> should already be in place.
         </p>
         <div id="import-error" class="error-msg"></div>
-        <form id="import-form" onsubmit="previewImport(event)" enctype="multipart/form-data">
+        <form id="import-form" enctype="multipart/form-data">
           <label class="file-label">
             <input type="file" id="import-file" accept=".json,application/json" required>
             <span>Choose posts.json…</span>
@@ -221,8 +232,8 @@
         </div>
         <p id="import-preview-count" style="margin-top:10px;color:#aaa;font-size:0.85rem;"></p>
         <div style="margin-top:16px;display:flex;gap:8px;">
-          <button class="btn-primary" onclick="commitImport()">Confirm &amp; Import</button>
-          <button class="btn-secondary" onclick="resetImport()">Cancel</button>
+          <button type="button" class="btn-primary" id="commit-import-btn">Confirm &amp; Import</button>
+          <button type="button" class="btn-secondary reset-import-btn">Cancel</button>
         </div>
       </div>
 
@@ -237,7 +248,7 @@
             <tbody id="created-users-tbody"></tbody>
           </table>
         </div>
-        <button class="btn-secondary" onclick="resetImport()" style="margin-top:16px;">Import Another File</button>
+        <button type="button" class="btn-secondary reset-import-btn" style="margin-top:16px;">Import Another File</button>
       </div>
     </section>
 
@@ -248,7 +259,7 @@
     <div class="modal-box">
       <h3 id="user-modal-title">Create User</h3>
       <div id="user-modal-error" class="error-msg"></div>
-      <form id="user-form" onsubmit="saveUser(event)">
+      <form id="user-form">
         <input type="hidden" id="user-id">
         <div class="form-grid">
           <label>Username</label>
@@ -284,12 +295,12 @@
         </div>
         <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end;">
           <button type="submit" class="btn-primary">Save</button>
-          <button type="button" class="btn-secondary" onclick="closeUserModal()">Cancel</button>
+          <button type="button" class="btn-secondary" id="close-user-modal-btn">Cancel</button>
         </div>
       </form>
 
       <hr style="border-color:#555;margin:16px 0;">
-      <button id="invite-btn" class="btn-secondary" onclick="sendInvite()" style="display:none;">
+      <button id="invite-btn" class="btn-secondary" style="display:none;">
         📧 Send Invite Email
       </button>
     </div>

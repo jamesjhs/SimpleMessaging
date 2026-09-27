@@ -19,6 +19,7 @@ let isPageVisible  = true;
 let unreadCount    = 0;
 let originalTitle  = document.title;
 let reportingMessageId = null;
+let csrfToken = null;
 
 function isObserverRole(role = currentRole) {
   return role === 'admin' || role === 'adult';
@@ -252,7 +253,20 @@ const AUDIO_RECORDING_FORCE_SCRIPT_PROCESSOR = false;
 
 // ── API helper ───────────────────────────────────────────────────────────────
 function apiFetch(url, options = {}) {
-  return fetch(url, { credentials: 'same-origin', ...options });
+  const method = String(options.method || 'GET').toUpperCase();
+  const headers = new Headers(options.headers || {});
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken) {
+    headers.set('X-CSRF-Token', csrfToken);
+  }
+  return fetch(url, { credentials: 'same-origin', ...options, headers });
+}
+
+async function refreshCsrfToken() {
+  const res = await fetch('/api/auth/csrf', { credentials: 'same-origin' });
+  if (!res.ok) return false;
+  const data = await res.json();
+  csrfToken = data.csrfToken || null;
+  return !!csrfToken;
 }
 
 async function fetchFileBytes(source) {
@@ -519,6 +533,7 @@ async function attemptLogin() {
     if (data.status === 'change_password') {
       currentUser = data.user.displayName;
       currentRole = data.user.role;
+      csrfToken = data.csrfToken || null;
       resetTurnstileChallenge();
       showLoginStep('change-password');
       document.getElementById('new-password').focus();
@@ -528,6 +543,7 @@ async function attemptLogin() {
     // Success
     currentUser = data.user.displayName;
     currentRole = data.user.role;
+    csrfToken = data.csrfToken || null;
     resetTurnstileChallenge();
     if (currentRole === 'admin') { window.location.href = '/admin.html'; return; }
     hideLoginOverlay();
@@ -558,6 +574,7 @@ async function verifyOtp() {
 
     currentUser = data.user.displayName;
     currentRole = data.user.role;
+    csrfToken = data.csrfToken || null;
 
     if (data.status === 'change_password') {
       showLoginStep('change-password');
@@ -579,7 +596,7 @@ async function submitNewPassword() {
   const errorEl = document.getElementById('cp-error');
 
   if (np !== cp)    { errorEl.textContent = 'Passwords do not match.'; return; }
-  if (np.length < 8){ errorEl.textContent = 'Password must be at least 8 characters.'; return; }
+  if (np.length < 12){ errorEl.textContent = 'Password must be at least 12 characters.'; return; }
 
   // For force-change during login we need a current password.
   // Use the password just entered to login (still in the input).
@@ -614,6 +631,63 @@ async function logout() {
   await apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
   showLoginOverlay();
 }
+
+function bindClick(id, handler) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('click', handler);
+}
+
+function bindStaticUiHandlers() {
+  bindClick('settings-btn', toggleSettingsPanel);
+  bindClick('new-message-prompt', () => scrollToBottom());
+  bindClick('attach-file-btn', () => document.getElementById('imageInput')?.click());
+  bindClick('attach-camera-btn', () => document.getElementById('cameraInput')?.click());
+  bindClick('open-recorder-btn', openRecorder);
+  bindClick('open-audio-recorder-btn', openAudioRecorder);
+  bindClick('share-location-btn', shareCurrentLocation);
+  bindClick('close-attachments-btn', collapseAttachmentPicker);
+  bindClick('audio-record-start-btn', startAudioRecording);
+  bindClick('audio-record-stop-btn', stopAudioRecording);
+  bindClick('audio-record-cancel-btn', cancelAudioRecording);
+  bindClick('clear-preview-btn', clearPreview);
+  bindClick('cancel-reply-btn', cancelReply);
+  bindClick('jumpToBottom', () => scrollToBottom());
+  bindClick('install-pwa-btn', promptPwaInstall);
+  bindClick('change-password-btn', showChangePasswordDialog);
+  bindClick('admin-panel-btn', () => { window.location.href = '/admin'; });
+  bindClick('logout-btn', logout);
+  bindClick('upload-warning-stay-btn', hideUploadWarning);
+  bindClick('upload-warning-exit-btn', emergencyExitNow);
+  bindClick('login-btn', attemptLogin);
+  bindClick('verify-otp-btn', verifyOtp);
+  bindClick('submit-new-password-btn', submitNewPassword);
+  bindClick('submit-change-password-btn', submitChangePassword);
+  bindClick('hide-change-password-btn', hideChangePasswordDialog);
+  bindClick('privacy-policy-btn', showPrivacyPolicy);
+  bindClick('privacy-close-btn', hidePrivacyPolicy);
+  bindClick('report-cancel-btn', hideReportDialog);
+  bindClick('report-submit-btn', submitReportDialog);
+  bindClick('close-recorder-btn', closeRecorder);
+  bindClick('recordBtn', toggleRecording);
+  bindClick('sendVideoBtn', finishRecording);
+  bindClick('flip-camera-btn', flipCamera);
+
+  document.getElementById('plus-btn')?.addEventListener('pointerdown', showAttachments);
+  document.getElementById('enter-to-send-toggle')?.addEventListener('change', e => toggleEnterToSend(e.target.checked));
+  document.getElementById('push-toggle')?.addEventListener('change', e => togglePushNotifications(e.target.checked));
+  document.getElementById('font-size-slider')?.addEventListener('input', e => applyFontSize(+e.target.value));
+  document.getElementById('font-size-slider')?.addEventListener('change', e => applyFontSize(+e.target.value));
+  document.getElementById('imageOverlay')?.addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeImagePopup();
+  });
+  document.addEventListener('contextmenu', e => {
+    if (e.target.matches?.('audio.chat-audio, #preview-audio, #overlayVideo, video.chat-img')) {
+      e.preventDefault();
+    }
+  });
+}
+
+bindStaticUiHandlers();
 
 // Login keyboard shortcuts
 document.getElementById('login-password').addEventListener('keydown', e => {
@@ -874,8 +948,10 @@ function renderMessage(p, otherLastSeen, me, cfg) {
 
   // Media
   let imageHtml = '';
-  if (p.imagePath) {
-    const mediaType = getMediaTypeFromPath(p.imagePath, p.mediaType);
+  const mediaPath = safeMediaPath(p.imagePath);
+  const blurPreviewPath = safeMediaPath(p.blurPreviewPath);
+  if (mediaPath) {
+    const mediaType = getMediaTypeFromPath(mediaPath, p.mediaType);
     const isVideo   = mediaType === 'video';
     const isAudio   = mediaType === 'audio';
     const blurClass = p.isBlurred ? 'blurred-preview' : '';
@@ -888,35 +964,32 @@ function renderMessage(p, otherLastSeen, me, cfg) {
         const iSaw = !isAdultObserver() && p.seenBy && p.seenBy.includes(me);
         imageHtml  = iSaw
           ? `<div class="view-once dead">${isAudio ? '👂 Voice Message Heard' : `👁️ ${isVideo ? 'Video' : 'Photo'} Viewed`}</div>`
-          : `<div id="view-once-${p.id}" class="view-once active" data-media-type="${mediaType}" onclick="openViewOnce('${p.id}')">${isAudio ? '👂 Listen Once' : `👁️ View Once ${isVideo ? 'Video' : 'Photo'}`}</div>`;
+          : `<div id="view-once-${p.id}" class="view-once active" data-media-type="${mediaType}" data-view-once-id="${escapeHtml(p.id)}">${isAudio ? '👂 Listen Once' : `👁️ View Once ${isVideo ? 'Video' : 'Photo'}`}</div>`;
       }
     } else if (isAudio) {
-      imageHtml = `<div class="voice-note-label">Voice message</div><audio src="${p.imagePath}" class="chat-audio" controls controlsList="nodownload" preload="metadata" oncontextmenu="return false"></audio>`;
+      imageHtml = `<div class="voice-note-label">Voice message</div><audio src="${mediaPath}" class="chat-audio" controls controlsList="nodownload" preload="metadata"></audio>`;
     } else if (p.isBlurred) {
-      const openOriginal = `showImagePopup(${escapeHtml(JSON.stringify(p.imagePath))})`;
-      if (p.blurPreviewPath) {
+      if (blurPreviewPath) {
         if (isVideo) {
-          imageHtml = `<div class="blurred-video-placeholder" onclick="${openOriginal}">
-            <img src="${escapeHtml(p.blurPreviewPath)}" class="chat-img clickable-img" alt="Blurred video preview">
+          imageHtml = `<div class="blurred-video-placeholder" data-open-media="${mediaPath}">
+            <img src="${escapeHtml(blurPreviewPath)}" class="chat-img clickable-img" alt="Blurred video preview">
             <span class="video-play-badge">▶</span>
           </div>`;
         } else {
-          imageHtml = `<img src="${escapeHtml(p.blurPreviewPath)}" class="chat-img clickable-img blurred-placeholder" onclick="${openOriginal}" alt="Blurred image preview">`;
+          imageHtml = `<img src="${escapeHtml(blurPreviewPath)}" class="chat-img clickable-img blurred-placeholder" data-open-media="${mediaPath}" alt="Blurred image preview">`;
         }
       } else {
-        imageHtml = `<button type="button" class="blurred-media-placeholder ${isVideo ? 'video' : 'image'}" onclick="${openOriginal}">
+        imageHtml = `<button type="button" class="blurred-media-placeholder ${isVideo ? 'video' : 'image'}" data-open-media="${mediaPath}">
           ${isVideo ? 'Blurred video' : 'Blurred image'}
         </button>`;
       }
     } else if (isVideo) {
-      imageHtml = `<video src="${p.imagePath}" class="chat-img ${blurClass}"
-        controls controlsList="nodownload" preload="metadata" oncontextmenu="return false" playsinline
-        onclick="this.classList.remove('blurred-preview')"
-        onplay="this.classList.remove('blurred-preview')"
-        ${p.isBlurred ? 'onended="this.classList.add(\'blurred-preview\')"' : ''}
+      imageHtml = `<video src="${mediaPath}" class="chat-img ${blurClass}"
+        controls controlsList="nodownload" preload="metadata" playsinline
+        ${p.isBlurred ? 'data-reblur-on-ended="1"' : ''}
         style="width:200px;height:200px;object-fit:cover;background:#000;"></video>`;
     } else {
-      imageHtml = `<img src="${p.imagePath}" class="chat-img clickable-img ${blurClass}" onclick="showImagePopup('${p.imagePath}')">`;
+      imageHtml = `<img src="${mediaPath}" class="chat-img clickable-img ${blurClass}" data-open-media="${mediaPath}">`;
     }
   }
 
@@ -1120,6 +1193,13 @@ function getMediaTypeFromPath(filePath, fallback = null) {
   if (AUDIO_FILE_EXT_RE.test(filePath)) return 'audio';
   if (/\.(mp4|webm|mkv|mov)$/i.test(filePath)) return 'video';
   return 'image';
+}
+
+function safeMediaPath(filePath) {
+  const value = String(filePath || '');
+  return /^\/uploads\/[0-9a-f-]+(?:\.blur)?\.(?:jpg|jpeg|png|gif|webp|mp4|webm|mkv|mov|weba|mp3|ogg|wav|m4a|aac)$/i.test(value)
+    ? value
+    : '';
 }
 
 function getMediaReplyLabel(filePath, mediaType = null) {
@@ -1709,6 +1789,7 @@ function startPendingUpload(pendingId) {
   const xhr = new XMLHttpRequest();
   entry.xhr = xhr;
   xhr.open('POST', '/api/messages', true);
+  if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken);
   // Credentials (session cookie) are sent automatically by the browser with same-origin XHR
 
   xhr.upload.onprogress = ev => {
@@ -1746,6 +1827,8 @@ postsContainer.addEventListener('click', async e => {
   const reportBtn = e.target.closest('.report-btn');
   const quotedMsg = e.target.closest('.quoted-msg');
   const chipEl    = e.target.closest('.reaction-chip');
+  const mediaOpen = e.target.closest('[data-open-media]');
+  const viewOnceBtn = e.target.closest('[data-view-once-id]');
   const postDiv   = e.target.closest('.post');
 
   if (cancelBtn) {
@@ -1798,11 +1881,34 @@ postsContainer.addEventListener('click', async e => {
       }).catch(() => {});
     }
     loadMessages();
+  } else if (viewOnceBtn) {
+    e.stopPropagation();
+    openViewOnce(viewOnceBtn.dataset.viewOnceId);
+  } else if (mediaOpen) {
+    e.stopPropagation();
+    showImagePopup(mediaOpen.dataset.openMedia);
   } else if (quotedMsg) {
     e.stopPropagation();
     scrollToMessage(quotedMsg.dataset.replyid, quotedMsg);
   }
 });
+
+postsContainer.addEventListener('click', e => {
+  const video = e.target.closest('video.chat-img');
+  if (video) video.classList.remove('blurred-preview');
+});
+
+postsContainer.addEventListener('play', e => {
+  if (e.target.matches?.('video.chat-img')) {
+    e.target.classList.remove('blurred-preview');
+  }
+}, true);
+
+postsContainer.addEventListener('ended', e => {
+  if (e.target.matches?.('video.chat-img[data-reblur-on-ended="1"]')) {
+    e.target.classList.add('blurred-preview');
+  }
+}, true);
 
 // ── Swipe to reply ────────────────────────────────────────────────────────────
 
@@ -2172,6 +2278,8 @@ async function sendTypingStatus(status) {
 // ── Image / video overlay ─────────────────────────────────────────────────────
 
 function showImagePopup(filePath) {
+  filePath = safeMediaPath(filePath);
+  if (!filePath) return;
   const vid    = document.getElementById('overlayVideo');
   const isVideo= /\.(mp4|webm|mkv|mov)$/i.test(filePath);
   if (isVideo) {
@@ -2204,14 +2312,16 @@ async function openViewOnce(id) {
   const res  = await apiFetch(`/api/messages/${id}/view`, { method: 'POST' });
   if (res.ok) {
     const data = await res.json();
-    const mediaType = getMediaTypeFromPath(data.imagePath, data.mediaType || btn?.dataset.mediaType);
+    const imagePath = safeMediaPath(data.imagePath);
+    if (!imagePath) return;
+    const mediaType = getMediaTypeFromPath(imagePath, data.mediaType || btn?.dataset.mediaType);
     if (mediaType === 'audio' && btn) {
       btn.className = 'view-once';
-      btn.innerHTML = `<div class="voice-note-label">Listen once</div><audio src="${data.imagePath}" class="chat-audio" controls autoplay controlsList="nodownload" preload="metadata" oncontextmenu="return false"></audio>`;
+      btn.innerHTML = `<div class="voice-note-label">Listen once</div><audio src="${imagePath}" class="chat-audio" controls autoplay controlsList="nodownload" preload="metadata"></audio>`;
       const audio = btn.querySelector('audio');
       if (audio) audio.addEventListener('ended', () => loadMessages(), { once: true });
     } else {
-      showImagePopup(data.imagePath);
+      showImagePopup(imagePath);
       loadMessages();
     }
   } else if (btn && isAdultObserver()) {
@@ -2457,7 +2567,7 @@ async function submitChangePassword() {
   const errorEl  = document.getElementById('cp-inline-error');
 
   if (np !== confirm)    { errorEl.textContent = 'Passwords do not match.';          return; }
-  if (np.length < 8)     { errorEl.textContent = 'Password must be at least 8 chars.'; return; }
+  if (np.length < 12)    { errorEl.textContent = 'Password must be at least 12 chars.'; return; }
 
   try {
     const res  = await apiFetch('/api/auth/change-password', {
@@ -2483,7 +2593,8 @@ function activateEmergencyExit() {
 function emergencyExitNow() {
   // Invalidate the session server-side before navigating away.
   // keepalive ensures the request completes even as the page unloads.
-  fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin', keepalive: true }).catch(() => {});
+  const headers = csrfToken ? { 'X-CSRF-Token': csrfToken } : {};
+  fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin', keepalive: true, headers }).catch(() => {});
   document.body.style.backgroundColor = '#ffffff';
   document.body.innerHTML = '';
   window.location.href = 'https://www.google.com/search?q=cromer+weather+forecast';
@@ -4059,6 +4170,7 @@ async function init() {
       const data = await res.json();
       currentUser = data.user;
       currentRole = data.role;
+      await refreshCsrfToken();
 
       if (data.forcePasswordChange) {
         // Need to show change-password step – but we are already authenticated

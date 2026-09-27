@@ -12,6 +12,7 @@ import type { AuthUser } from '../types';
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const OTP_TTL_MS     = 10 * 60 * 1000;           // 10 minutes
+const SAFE_METHODS   = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 // ── SMTP transport (lazy-initialised) ────────────────────────────────────────
 
@@ -125,18 +126,54 @@ function buildSessionCookie(req: Request, token: string, maxAgeSeconds: number):
   return parts.join('; ');
 }
 
+function constantTimeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
+}
+
+function requestCsrfToken(req: Request): string {
+  const header = req.get('x-csrf-token');
+  return typeof header === 'string' ? header : '';
+}
+
+export function getCsrfTokenForSession(token: string | undefined): string | null {
+  if (!token) return null;
+  const row = getDb().prepare(
+    'SELECT csrf_token FROM sessions WHERE token = ? AND expires_at > ?',
+  ).get(token, Date.now()) as { csrf_token: string } | undefined;
+  if (!row) return null;
+  if (row.csrf_token) return row.csrf_token;
+
+  const csrf = crypto.randomBytes(32).toString('hex');
+  getDb().prepare('UPDATE sessions SET csrf_token = ? WHERE token = ?').run(csrf, token);
+  return csrf;
+}
+
+function validateCsrf(req: Request, res: Response): boolean {
+  if (SAFE_METHODS.has(req.method)) return true;
+  const expected = getCsrfTokenForSession(req.sessionToken);
+  const actual = requestCsrfToken(req);
+  if (!expected || !actual || !constantTimeEqual(actual, expected)) {
+    res.status(403).json({ error: 'Invalid CSRF token' });
+    return false;
+  }
+  return true;
+}
+
 /**
  * Creates a new session for a user and sets the session cookie on res.
  */
 export function createSession(userId: number, req: Request, res: Response): string {
   const db    = getDb();
   const token = crypto.randomBytes(32).toString('hex');
+  const csrf  = crypto.randomBytes(32).toString('hex');
   const now   = Date.now();
 
   db.prepare(`
-    INSERT INTO sessions (token, user_id, created_at, expires_at)
-    VALUES (?, ?, ?, ?)
-  `).run(token, userId, now, now + SESSION_TTL_MS);
+    INSERT INTO sessions (token, user_id, csrf_token, created_at, expires_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(token, userId, csrf, now, now + SESSION_TTL_MS);
 
   res.setHeader(
     'Set-Cookie',
@@ -189,6 +226,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   }
   req.user         = user;
   req.sessionToken = cookies.session;
+  if (!validateCsrf(req, res)) return;
   next();
 }
 

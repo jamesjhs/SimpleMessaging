@@ -146,6 +146,12 @@ const ALLOWED_MIMES = new Set([
   'audio/wav',  'audio/x-wav',
 ]);
 const ALLOWED_MEDIA_LABEL = 'JPEG, PNG, GIF, WebP, MP4, WebM, MKV, MOV, MP3, OGG, WAV, M4A, or WebM audio';
+const SAFE_UPLOAD_PATH_RE = /^\/uploads\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?:\.blur)?\.(?:jpg|jpeg|png|gif|webp|mp4|webm|mkv|mov|weba|mp3|ogg|wav|m4a|aac)$/i;
+
+function normalizeStoredMediaPath(filePath: string | null): string | null {
+  if (!filePath) return null;
+  return SAFE_UPLOAD_PATH_RE.test(filePath) ? filePath : null;
+}
 
 function getMediaTypeFromPath(filePath: string | null): 'image' | 'video' | 'audio' | null {
   if (!filePath) return null;
@@ -214,7 +220,8 @@ function rowToPost(row: DbMessage, viewer?: PostViewer): ApiPost {
   // For view-once messages, withhold the file path once the requesting user
   // has already opened it.  Observer roles always receive the path (no view
   // record is written for them) so moderation workflows are not broken.
-  let imagePath = row.image_path ?? null;
+  let imagePath = normalizeStoredMediaPath(row.image_path ?? null);
+  let blurPreviewPath = normalizeStoredMediaPath(row.blur_preview_path ?? null);
   if (row.view_once === 1 && imagePath && viewer?.role === 'user') {
     const alreadyViewed = db.prepare(
       'SELECT 1 FROM message_views WHERE message_id = ? AND user_id = ?',
@@ -229,7 +236,7 @@ function rowToPost(row: DbMessage, viewer?: PostViewer): ApiPost {
     user:      row.display_name ?? '',
     text:      outcomeText || (hiddenForNormal ? 'Message flagged' : row.text ?? ''),
     imagePath,
-    blurPreviewPath: !hiddenForNormal && row.is_blurred === 1 ? row.blur_preview_path ?? null : null,
+    blurPreviewPath: !hiddenForNormal && row.is_blurred === 1 ? blurPreviewPath : null,
     mediaType: getMediaTypeFromPath(imagePath),
     viewOnce:  !hiddenForNormal && row.view_once  === 1,
     isBlurred: !hiddenForNormal && row.is_blurred === 1,
@@ -303,7 +310,7 @@ router.get('/config', (_req: Request, res: Response): void => {
 
 // ── GET /api/messages ─────────────────────────────────────────────────────────
 
-router.get('/messages', requireAuth, (req: Request, res: Response): void => {
+router.get('/messages', requireAuth, rateLimiter({ windowMs: 60_000, max: 120 }), (req: Request, res: Response): void => {
   const db  = getDb();
   const now = Date.now();
 
@@ -497,7 +504,7 @@ router.post(
 
 // ── DELETE /api/messages/:id ──────────────────────────────────────────────────
 
-router.delete('/messages/:id', requireAuth, (req: Request, res: Response): void => {
+router.delete('/messages/:id', requireAuth, rateLimiter({ windowMs: 60_000, max: 30 }), (req: Request, res: Response): void => {
   const db  = getDb();
   const msg = db.prepare('SELECT * FROM messages WHERE id = ?').get(req.params.id) as DbMessage | undefined;
   if (!msg) { res.sendStatus(404); return; }
@@ -521,7 +528,7 @@ router.delete('/messages/:id', requireAuth, (req: Request, res: Response): void 
 
 // ── POST /api/messages/:id/view  (view-once) ─────────────────────────────────
 
-router.post('/messages/:id/view', requireAuth, (req: Request, res: Response): void => {
+router.post('/messages/:id/view', requireAuth, rateLimiter({ windowMs: 60_000, max: 60 }), (req: Request, res: Response): void => {
   const db  = getDb();
   const msg = db.prepare(
     'SELECT * FROM messages WHERE id = ? AND deleted_at IS NULL',
@@ -552,12 +559,17 @@ router.post('/messages/:id/view', requireAuth, (req: Request, res: Response): vo
       .run(msg.id, req.user!.id, Date.now());
   }
 
-  res.json({ imagePath: msg.image_path, mediaType: getMediaTypeFromPath(msg.image_path) });
+  const imagePath = normalizeStoredMediaPath(msg.image_path ?? null);
+  if (!imagePath) {
+    res.status(404).json({ error: 'Media unavailable' });
+    return;
+  }
+  res.json({ imagePath, mediaType: getMediaTypeFromPath(imagePath) });
 });
 
 // ── POST /api/messages/:id/report ────────────────────────────────────────────
 
-router.post('/messages/:id/report', requireAuth, async (req: Request, res: Response): Promise<void> => {
+router.post('/messages/:id/report', requireAuth, rateLimiter({ windowMs: 60_000, max: 10 }), async (req: Request, res: Response): Promise<void> => {
   if (getSetting('report_enabled') !== '1') {
     res.status(403).json({ error: 'Reporting is not enabled' });
     return;
@@ -594,7 +606,7 @@ router.post('/messages/:id/report', requireAuth, async (req: Request, res: Respo
 
 // ── POST /api/typing ──────────────────────────────────────────────────────────
 
-router.post('/typing', requireAuth, (req: Request, res: Response): void => {
+router.post('/typing', requireAuth, rateLimiter({ windowMs: 60_000, max: 120 }), (req: Request, res: Response): void => {
   if (isObserverRole(req.user!.role)) {
     res.sendStatus(204);
     return;
@@ -626,7 +638,7 @@ router.get('/preferences', requireAuth, (req: Request, res: Response): void => {
 
 // ── POST /api/preferences ─────────────────────────────────────────────────────
 
-router.post('/preferences', requireAuth, (req: Request, res: Response): void => {
+router.post('/preferences', requireAuth, rateLimiter({ windowMs: 60_000, max: 30 }), (req: Request, res: Response): void => {
   const { scheme, enterToSend, pushEnabled, fontSize, fontFamily } = req.body as {
     scheme?:      string;
     enterToSend?: boolean;
@@ -689,7 +701,7 @@ router.post('/preferences', requireAuth, (req: Request, res: Response): void => 
 
 const ALLOWED_REACTION_EMOJIS = new Set(['👍', '❤️', '😂', '😮', '😢', '👏', '🔥', '😡']);
 
-router.post('/messages/:id/react', requireAuth, (req: Request, res: Response): void => {
+router.post('/messages/:id/react', requireAuth, rateLimiter({ windowMs: 60_000, max: 60 }), (req: Request, res: Response): void => {
   if (isObserverRole(req.user!.role)) {
     res.status(403).json({ error: 'Observer accounts cannot react to messages' });
     return;
@@ -723,7 +735,7 @@ router.post('/messages/:id/react', requireAuth, (req: Request, res: Response): v
 
 // ── DELETE /api/messages/:id/react ───────────────────────────────────────────
 
-router.delete('/messages/:id/react', requireAuth, (req: Request, res: Response): void => {
+router.delete('/messages/:id/react', requireAuth, rateLimiter({ windowMs: 60_000, max: 60 }), (req: Request, res: Response): void => {
   if (isObserverRole(req.user!.role)) {
     res.status(403).json({ error: 'Observer accounts cannot react to messages' });
     return;
@@ -762,7 +774,7 @@ router.get('/push/vapid-public-key', (_req: Request, res: Response): void => {
 
 // ── POST /api/push/subscribe ──────────────────────────────────────────────────
 
-router.post('/push/subscribe', requireAuth, (req: Request, res: Response): void => {
+router.post('/push/subscribe', requireAuth, rateLimiter({ windowMs: 60_000, max: 20 }), (req: Request, res: Response): void => {
   if (isObserverRole(req.user!.role)) {
     res.status(403).json({ error: 'Observer accounts cannot subscribe to push notifications' });
     return;
@@ -802,7 +814,7 @@ router.post('/push/subscribe', requireAuth, (req: Request, res: Response): void 
 
 // ── DELETE /api/push/unsubscribe ──────────────────────────────────────────────
 
-router.delete('/push/unsubscribe', requireAuth, (req: Request, res: Response): void => {
+router.delete('/push/unsubscribe', requireAuth, rateLimiter({ windowMs: 60_000, max: 20 }), (req: Request, res: Response): void => {
   const { endpoint } = req.body as { endpoint?: string };
 
   if (!endpoint) {

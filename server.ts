@@ -70,17 +70,87 @@ if (trustProxy !== undefined) {
   app.set('trust proxy', trustProxy);
 }
 
+function isUnsafeMethod(method: string): boolean {
+  return !['GET', 'HEAD', 'OPTIONS'].includes(method);
+}
+
+function getExpectedOrigin(req: Request): string | null {
+  const host = req.get('host');
+  if (!host) return null;
+  return `${req.protocol}://${host}`;
+}
+
 // ── Security / CORS headers ────────────────────────────────────────────────────
 // COOP + COEP are required for SharedArrayBuffer (FFmpeg WASM video compression)
-app.use((_req: Request, res: Response, next: NextFunction): void => {
+app.use((req: Request, res: Response, next: NextFunction): void => {
   res.setHeader('Cross-Origin-Opener-Policy',  'same-origin');
   res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=(self), fullscreen=(self)');
+  res.setHeader(
+    'Content-Security-Policy',
+    [
+      "default-src 'self'",
+      "script-src 'self' https://challenges.cloudflare.com 'wasm-unsafe-eval'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' blob: data:",
+      "media-src 'self' blob:",
+      "connect-src 'self' https://challenges.cloudflare.com",
+      "frame-src https://challenges.cloudflare.com",
+      "worker-src 'self' blob:",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+    ].join('; '),
+  );
+  if (req.secure) {
+    res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+  }
   next();
 });
 
 // ── Body parsing ──────────────────────────────────────────────────────────────
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: false, limit: '100kb' }));
+
+// Reject browser-initiated cross-site state changes before route handlers run.
+app.use((req: Request, res: Response, next: NextFunction): void => {
+  if (!isUnsafeMethod(req.method)) { next(); return; }
+
+  const secFetchSite = req.get('sec-fetch-site');
+  if (secFetchSite && !['same-origin', 'same-site', 'none'].includes(secFetchSite)) {
+    res.status(403).json({ error: 'Cross-site request blocked' });
+    return;
+  }
+
+  const expected = getExpectedOrigin(req);
+  const origin = req.get('origin');
+  if (origin && expected && origin !== expected) {
+    res.status(403).json({ error: 'Invalid request origin' });
+    return;
+  }
+
+  if (!origin) {
+    const referer = req.get('referer');
+    if (referer && expected) {
+      try {
+        if (new URL(referer).origin !== expected) {
+          res.status(403).json({ error: 'Invalid request referer' });
+          return;
+        }
+      } catch {
+        res.status(403).json({ error: 'Invalid request referer' });
+        return;
+      }
+    }
+  }
+
+  next();
+});
 
 // ── PWA manifest (only when enabled) ─────────────────────────────────────────
 app.get('/manifest.json', rateLimiter({ windowMs: 60_000, max: 60 }), (_req: Request, res: Response): void => {
@@ -143,6 +213,9 @@ app.use('/uploads', (req: Request, res: Response, next: NextFunction): void => {
   next();
 }, express.static(UPLOADS_DIR, {
   setHeaders: (res: Response, filePath: string) => {
+    res.setHeader('Content-Disposition', 'inline');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, max-age=86400');
     if (filePath.endsWith('.weba')) res.setHeader('Content-Type', 'audio/webm');
   },
 }));

@@ -65,6 +65,7 @@ export async function initDb(): Promise<DB> {
     CREATE TABLE IF NOT EXISTS sessions (
       token      TEXT    PRIMARY KEY,
       user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      csrf_token TEXT    NOT NULL DEFAULT '',
       created_at INTEGER NOT NULL,
       expires_at INTEGER NOT NULL
     );
@@ -165,6 +166,7 @@ export async function initDb(): Promise<DB> {
     `ALTER TABLE reports ADD COLUMN reason TEXT`,
     `ALTER TABLE reports ADD COLUMN outcome_message TEXT`,
     `ALTER TABLE messages ADD COLUMN blur_preview_path TEXT`,
+    `ALTER TABLE sessions ADD COLUMN csrf_token TEXT NOT NULL DEFAULT ''`,
   ]) {
     try { db.exec(sql); } catch { /* column already exists – safe to ignore */ }
   }
