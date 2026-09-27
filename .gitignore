@@ -323,6 +323,18 @@ data/*.db-shm
 uploads/*
 !uploads/.gitkeep
 dist/
+public/favicon-32.png
+public/pwa-icon-128.png
+public/pwa-icon-144.png
+public/pwa-icon-152.png
+public/pwa-icon-180.png
+public/pwa-icon-192.png
+public/pwa-icon-384.png
+public/pwa-icon-512.png
+public/pwa-icon-72.png
+public/pwa-icon-96.png
+public/pwa-icon-maskable-192.png
+public/pwa-icon-maskable-512.png
 
 # Visual Studio 6 build log
 *.plg
