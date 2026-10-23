@@ -942,7 +942,7 @@ function renderMessage(p, otherLastSeen, me, cfg) {
   if (p.replyText) {
     quoteHtml = `<div class="quoted-msg" data-replyid="${p.replyId}" style="cursor:pointer;">
       <span class="quoted-user">${escapeHtml(p.replyUser)}</span>
-      ${escapeHtml(p.replyText)}
+      <span class="quoted-text">${escapeHtml(p.replyText)}</span>
     </div>`;
   }
 
@@ -1646,7 +1646,7 @@ function createPendingBubble(pendingId, text, file, replyData) {
 
   let quoteHtml = '';
   if (replyData) {
-    quoteHtml = `<div class="quoted-msg"><span class="quoted-user">${escapeHtml(replyData.user)}</span>${escapeHtml(replyData.text)}</div>`;
+    quoteHtml = `<div class="quoted-msg"><span class="quoted-user">${escapeHtml(replyData.user)}</span><span class="quoted-text">${escapeHtml(replyData.text)}</span></div>`;
   }
   let mediaHtml = '';
   if (file) {

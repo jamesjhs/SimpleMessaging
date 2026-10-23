@@ -40,8 +40,8 @@ TLS is a minimal, end-to-end encrypted, two-person secure messaging application.
 
 | Layer | Technology |
 |-------|-----------|
-| Runtime | Node.js ≥ 20 |
-| Language | TypeScript 6 (strict mode), compiled with `tsc` or run with `tsx` |
+| Runtime | Node.js ≥ 22 |
+| Language | TypeScript 7 (strict mode), compiled with `tsc` or run with `tsx` |
 | Web framework | Express 5 |
 | Database | SQLite via `better-sqlite3-multiple-ciphers` (SQLCipher AES-256-CBC) |
 | Password hashing | Node built-in `crypto.scrypt` (N=32768, r=8, p=1, keyLen=64) |
@@ -52,6 +52,8 @@ TLS is a minimal, end-to-end encrypted, two-person secure messaging application.
 | CAPTCHA | Cloudflare Turnstile (optional) |
 | Frontend | Vanilla JS + CSS (no framework) |
 | PWA | Service Worker + Web App Manifest |
+
+The database package's prebuilt binaries support Windows and macOS x64/arm64, Linux x64/arm64 with glibc 2.35 or newer, and Alpine Linux x64/arm64. Version 13 no longer provides Windows x86 or Linux armv7 builds.
 
 ---
 
@@ -412,7 +414,7 @@ Users can choose between three built-in font stacks: Default Sans, Serif, and Fr
 
 ### 8.13 In-App Video Recorder
 
-The `🎥` button opens a full-screen recorder using `MediaRecorder` (WebRTC). Maximum recording time is 60 seconds. The recording is submitted directly as a file to `POST /api/messages`. Optional FFmpeg WASM compression is attempted if the CDN libraries are available.
+The `🎥` button opens a full-screen recorder using `MediaRecorder` (WebRTC). Maximum recording time is 60 seconds. The recording is submitted directly as a file to `POST /api/messages`. Optional FFmpeg WASM compression uses the locally bundled `@ffmpeg/ffmpeg` 0.12.15 and `@ffmpeg/core` 0.12.10 assets in `public/vendor/ffmpeg`.
 
 ---
 

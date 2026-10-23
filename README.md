@@ -35,7 +35,8 @@ A self-hosted, end-to-end encrypted two-person chat application built with **Nod
 
 ### 1. Prerequisites
 
-- **Node.js 20+** (production target: Node.js 24)
+- **Node.js 22+** (production target: Node.js 24)
+- For the database package's prebuilt binaries: Windows x64/arm64, macOS x64/arm64, or Linux x64/arm64 (glibc 2.35+; Alpine builds are also available)
 - A working **SMTP** server for OTP and invite emails
 
 ### 2. Install dependencies
