@@ -40,7 +40,7 @@ TLS is a minimal, end-to-end encrypted, two-person secure messaging application.
 
 | Layer | Technology |
 |-------|-----------|
-| Runtime | Node.js ≥ 22 |
+| Runtime | Node.js 22 or 24 |
 | Language | TypeScript 7 (strict mode), compiled with `tsc` or run with `tsx` |
 | Web framework | Express 5 |
 | Database | SQLite via `better-sqlite3-multiple-ciphers` (SQLCipher AES-256-CBC) |
@@ -53,7 +53,7 @@ TLS is a minimal, end-to-end encrypted, two-person secure messaging application.
 | Frontend | Vanilla JS + CSS (no framework) |
 | PWA | Service Worker + Web App Manifest |
 
-The database package's prebuilt binaries support Windows and macOS x64/arm64, Linux x64/arm64 with glibc 2.35 or newer, and Alpine Linux x64/arm64. Version 13 no longer provides Windows x86 or Linux armv7 builds.
+The database package is pinned to `better-sqlite3-multiple-ciphers` 12.9.0 to support the 32-bit Raspberry Pi deployment. This release provides Linux ARM prebuilt binaries for Node.js 22 and 24. Keep the exact version pin: version 13 drops Linux armv7 prebuilt binaries.
 
 ---
 

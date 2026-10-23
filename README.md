@@ -35,8 +35,8 @@ A self-hosted, end-to-end encrypted two-person chat application built with **Nod
 
 ### 1. Prerequisites
 
-- **Node.js 22+** (production target: Node.js 24)
-- For the database package's prebuilt binaries: Windows x64/arm64, macOS x64/arm64, or Linux x64/arm64 (glibc 2.35+; Alpine builds are also available)
+- **Node.js 22 or 24** (production target: Node.js 24)
+- The database package is pinned to `better-sqlite3-multiple-ciphers` 12.9.0 for 32-bit Raspberry Pi (Linux ARM) support. Keep this pin when updating dependencies; version 13 drops Linux armv7 prebuilt binaries.
 - A working **SMTP** server for OTP and invite emails
 
 ### 2. Install dependencies
