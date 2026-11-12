@@ -279,13 +279,6 @@ async function fetchFileBytes(source) {
   return new Uint8Array(await res.arrayBuffer());
 }
 
-async function toLocalBlobURL(url, mimeType) {
-  const res = await fetch(url, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`Could not load ${url}: HTTP ${res.status}`);
-  const blob = new Blob([await res.arrayBuffer()], { type: mimeType });
-  return URL.createObjectURL(blob);
-}
-
 function loadScript(url) {
   return new Promise((resolve, reject) => {
     const existing = document.querySelector(`script[src="${url}"]`);
@@ -3664,20 +3657,16 @@ async function initializeFFmpeg() {
     const pct = Math.round(progress * 100);
     if (activePendingId) setPendingProgress(activePendingId, pct, '#ffc107');
   });
-  const coreBaseUrl = FFMPEG_VENDOR_BASE_URL;
-  const blobURLs = [];
   try {
-    const coreURL = await toLocalBlobURL(`${coreBaseUrl}/ffmpeg-core.js`, 'text/javascript');
-    blobURLs.push(coreURL);
-    const wasmURL = await toLocalBlobURL(`${coreBaseUrl}/ffmpeg-core.wasm`, 'application/wasm');
-    blobURLs.push(wasmURL);
+    // Worker imports must use same-origin script URLs allowed by our CSP.
+    // Resolve against the page because relative URLs otherwise use the worker's path.
+    const coreURL = new URL(`${FFMPEG_VENDOR_BASE_URL}/ffmpeg-core.js`, window.location.href).href;
+    const wasmURL = new URL(`${FFMPEG_VENDOR_BASE_URL}/ffmpeg-core.wasm`, window.location.href).href;
     await instance.load({ coreURL, wasmURL });
     ffmpegInst = instance;
   } catch (err) {
     instance.terminate();
     throw err;
-  } finally {
-    blobURLs.forEach(url => URL.revokeObjectURL(url));
   }
 }
 
