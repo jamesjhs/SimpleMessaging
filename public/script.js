@@ -3631,12 +3631,23 @@ function cleanupAudioRecorder() {
   updateComposerLayoutForText();
 }
 
-// ── FFmpeg video compression (optional, CDN-loaded) ───────────────────────────
+// ── FFmpeg media compression (locally bundled) ───────────────────────────────
 
 let ffmpegInst = null;
+let ffmpegLoadPromise = null;
 
 async function loadFFmpeg() {
-  if (ffmpegInst) return;
+  if (ffmpegInst?.loaded) return;
+  if (ffmpegLoadPromise) return ffmpegLoadPromise;
+  ffmpegLoadPromise = initializeFFmpeg();
+  try {
+    await ffmpegLoadPromise;
+  } finally {
+    ffmpegLoadPromise = null;
+  }
+}
+
+async function initializeFFmpeg() {
   if (typeof FFmpegWASM === 'undefined') {
     await loadScript(`${FFMPEG_VENDOR_BASE_URL}/ffmpeg.js`);
   }
@@ -3647,17 +3658,27 @@ async function loadFFmpeg() {
     throw new Error('Browser is not cross-origin isolated, so FFmpeg WASM cannot use SharedArrayBuffer. Check COOP/COEP headers.');
   }
   const { FFmpeg } = FFmpegWASM;
-  ffmpegInst = new FFmpeg();
-  ffmpegInst.on('log', ({ message }) => console.debug('[ffmpeg]', message));
-  ffmpegInst.on('progress', ({ progress }) => {
+  const instance = new FFmpeg();
+  instance.on('log', ({ message }) => console.debug('[ffmpeg]', message));
+  instance.on('progress', ({ progress }) => {
     const pct = Math.round(progress * 100);
     if (activePendingId) setPendingProgress(activePendingId, pct, '#ffc107');
   });
   const coreBaseUrl = FFMPEG_VENDOR_BASE_URL;
-  await ffmpegInst.load({
-    coreURL: await toLocalBlobURL(`${coreBaseUrl}/ffmpeg-core.js`, 'text/javascript'),
-    wasmURL: await toLocalBlobURL(`${coreBaseUrl}/ffmpeg-core.wasm`, 'application/wasm'),
-  });
+  const blobURLs = [];
+  try {
+    const coreURL = await toLocalBlobURL(`${coreBaseUrl}/ffmpeg-core.js`, 'text/javascript');
+    blobURLs.push(coreURL);
+    const wasmURL = await toLocalBlobURL(`${coreBaseUrl}/ffmpeg-core.wasm`, 'application/wasm');
+    blobURLs.push(wasmURL);
+    await instance.load({ coreURL, wasmURL });
+    ffmpegInst = instance;
+  } catch (err) {
+    instance.terminate();
+    throw err;
+  } finally {
+    blobURLs.forEach(url => URL.revokeObjectURL(url));
+  }
 }
 
 function applyFontFamily(name, save = true) {
