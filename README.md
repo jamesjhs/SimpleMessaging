@@ -35,10 +35,10 @@ A self-hosted, end-to-end encrypted two-person chat application built with **Nod
 
 ### 1. Prerequisites
 
-- **Node.js 22–26** on supported 64-bit hosts; **Node.js 22** on 32-bit Raspberry Pi Debian 13 / Raspberry Pi OS (ARMv7 or newer). CI covers Node 22, 24 and 26 on Windows and Linux.
+- **Node.js 22–26** on supported 64-bit hosts; **Node.js 22** on 32-bit Raspberry Pi Debian / Raspberry Pi OS 11 or newer (glibc >= 2.31, ARMv7 or newer). CI covers Node 22, 24 and 26 on Windows and Linux, with an additional emulated Node 22 / Bullseye ARM32 job.
 - The database loader selects the Node-API driver `better-sqlite3-multiple-ciphers` 13.0.3 on modern hosts and the platform-specific 12.9.0 driver on Linux ARM32. Keep both pins: version 13 has no ARMv7 prebuild. The Pi remains on Node 22.
 - A working **SMTP** server for OTP and invite emails
-- See [32-bit Raspberry Pi installation and dependency checks](TECHNICAL_MANUAL.md#151-32-bit-raspberry-pi-debian-13) for the Node 22 installation procedure, native dependency matrix, and target verification.
+- See [32-bit Raspberry Pi installation and dependency checks](TECHNICAL_MANUAL.md#151-32-bit-raspberry-pi-debian--raspberry-pi-os-11-or-newer) for the Node 22 installation procedure, native dependency matrix, and target verification.
 
 ### 2. Install dependencies
 

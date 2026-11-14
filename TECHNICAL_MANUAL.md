@@ -622,26 +622,28 @@ Browser (recipient)                         Server                          DB
 
 ## 15. Deployment
 
-### 15.1 32-bit Raspberry Pi Debian 13
+### 15.1 32-bit Raspberry Pi Debian / Raspberry Pi OS 11 or newer
 
-The deployment target is **Debian 13 / Raspberry Pi OS based on Debian 13, 32-bit armhf userland, ARMv7 or newer CPU, glibc, and Node.js 22**. Pi 2/3/4/5 and Zero 2 class hardware with a compatible 32-bit OS are appropriate; original Pi 1 / Zero / Zero W ARMv6 hardware is outside this dependency target. A 64-bit kernel on 32-bit userland is possible: use `getconf LONG_BIT`, `dpkg --print-architecture`, and Node's `process.arch` rather than relying solely on `uname -m`.
+The deployment target is **Debian / Raspberry Pi OS 11 or newer, 32-bit armhf userland, ARMv7 or newer CPU, glibc >= 2.31, and Node.js 22**. This includes Raspbian 11 (Bullseye) with glibc 2.31. Pi 2/3/4/5 and Zero 2 class hardware with a compatible 32-bit OS are appropriate; original Pi 1 / Zero / Zero W ARMv6 hardware is outside this dependency target. A 64-bit kernel on 32-bit userland is possible: use `getconf LONG_BIT`, `dpkg --print-architecture`, and Node's `process.arch` rather than relying solely on `uname -m`.
 
 Node 22 lists Linux ARMv7 as Tier 1; Node 24 downgraded it to experimental. This repository selects Node 22 in `.nvmrc` and its installation/start checks require Node 22 on Linux ARM32. On other hosts the accepted runtime range is Node 22 through 26. Debian 13's standard `nodejs` package is Node 20, which does not meet this project's declared runtime. Install a maintained Node 22 ARMv7 build explicitly. See the [Node 22 support table](https://github.com/nodejs/node/blob/v22.x/BUILDING.md#platform-list), [Node 24 migration notes](https://nodejs.org/en/blog/migrations/v22-to-v24), and [Debian 13 nodejs package](https://packages.debian.org/trixie/nodejs).
 
 Dependency assessment for the locked versions:
 
+Sharp is deliberately pinned to 0.34.5 for Bullseye's glibc 2.31. Its bundled image libraries have known high-severity advisories (reported by `npm audit`), fixed by Sharp 0.35.5, whose ARM32 binary requires glibc 2.36. This is a compatibility tradeoff for the existing server; upgrading the OS and restoring a patched Sharp release remains the security remediation. Do not mix a newer Sharp binding with older libvips binaries.
+
 | Dependency | Version / target | ARM32 requirements |
 |---|---|---|
 | Database driver on Linux ARM32 | `@tls/sqlite-arm32` → 12.9.0 | Native Linux ARM prebuild for Node 22; keep the exact pin. SQLCipher is bundled; do not substitute Debian's ordinary SQLite binding. The local package is restricted to Linux ARM32 and is skipped on other hosts. |
 | Database driver on supported 64-bit hosts | `better-sqlite3-multiple-ciphers` 13.0.3 | Node-API binaries for Node 22–26 on Windows/Linux/macOS x64 and ARM64. Linux glibc builds require glibc >= 2.35. No ARMv7 binary; the shared loader selects the legacy Pi driver instead. |
-| `sharp` | 0.35.5 | `@img/sharp-linux-arm` 0.35.5 plus `@img/sharp-libvips-linux-arm` 1.3.4. The ARM libvips package requires glibc >= 2.36; Debian 13 meets this baseline. Keep optional dependencies installed. |
+| `sharp` | 0.34.5 | `@img/sharp-linux-arm` 0.34.5 plus `@img/sharp-libvips-linux-arm` 1.2.4. This ARM libvips build requires glibc >= 2.31 and supports Bullseye with Node 22. Keep the exact pin and optional dependencies installed. |
 | `dotenv`, `express`, `multer`, `nodemailer`, `web-push` | Locked 18.0.9 / 5.3.0 / 2.5.0 / 10.2.1 / 3.6.7 | JavaScript dependencies compatible with Node 22; no additional target-specific native module in their locked dependency trees. Crypto/TLS use Node's built-in implementation. |
 | `tsx` / `esbuild` | 4.23.15 / 0.28.2 | esbuild ships `@esbuild/linux-arm`; install its optional binary and allow its install script. Needed by `npm start`, maintenance CLI and tests. |
 | `typescript` | 7.0.2 | Native compiler ships `@typescript/typescript-linux-arm`; install optional dependencies even for build-only use. |
 | `@types/*`, including `@types/node` 22.x | Locked development definitions | No native runtime; Node definitions match the Pi's Node 22 API baseline. |
 | Browser FFmpeg assets in `public/vendor/ffmpeg/` | JavaScript / WebAssembly | Execute in the client's browser, not as a server ARM executable. No server `ffmpeg` package is required. Browser memory and SharedArrayBuffer support still apply. |
 
-The native support is documented in the [Pi database release](https://github.com/m4heshd/better-sqlite3-multiple-ciphers/releases/tag/v12.9.0), [Node-API database release](https://github.com/m4heshd/better-sqlite3-multiple-ciphers/releases/tag/v13.0.3), [Sharp installation guide](https://sharp.pixelplumbing.com/install/), [ARM libvips manifest](https://github.com/lovell/sharp-libvips/blob/main/npm/linux-arm/package.json), and [esbuild ARM manifest](https://github.com/evanw/esbuild/blob/v0.28.2/npm/@esbuild/linux-arm/package.json). Architecture-specific compiler entries can also be inspected directly in `package-lock.json`. The lockfile includes platform alternatives; npm selects only those appropriate for the target. Do not replace the pins with `latest` without rechecking ARM32 support.
+The native support is documented in the [Pi database release](https://github.com/m4heshd/better-sqlite3-multiple-ciphers/releases/tag/v12.9.0), [Node-API database release](https://github.com/m4heshd/better-sqlite3-multiple-ciphers/releases/tag/v13.0.3), [Sharp installation guide](https://sharp.pixelplumbing.com/install/), [ARM libvips manifest](https://github.com/lovell/sharp-libvips/blob/v1.2.4/npm/linux-arm/package.json), and [esbuild ARM manifest](https://github.com/evanw/esbuild/blob/v0.28.2/npm/@esbuild/linux-arm/package.json). Architecture-specific compiler entries can also be inspected directly in `package-lock.json`. The lockfile includes platform alternatives; npm selects only those appropriate for the target. Do not replace the pins with `latest` without rechecking ARM32 support.
 
 Verify the machine first:
 
@@ -649,7 +651,7 @@ Verify the machine first:
 cat /etc/os-release
 dpkg --print-architecture       # armhf
 getconf LONG_BIT                # 32
-getconf GNU_LIBC_VERSION        # glibc >= 2.36
+getconf GNU_LIBC_VERSION        # glibc >= 2.31
 ```
 
 If Node 22 is not already installed, the following installs the latest official Node 22 ARMv7 tarball into a dedicated prefix. Run this on the Pi, not on the Windows development workstation. If a Node version manager is already installed, `nvm install` / `nvm use` from the project directory uses `.nvmrc` instead.
@@ -692,7 +694,7 @@ Do not use `--omit=optional`, `--ignore-scripts`, or copy `node_modules` from Wi
 
 Keep `platform/sqlite-arm32/` and `.npmrc` in deployment checkouts: npm packs the local optional package using `install-links=true`, installs it only on Linux ARM32, and installs its nested native dependency at version 12.9.0. If that optional install fails, the platform check reports the missing Pi driver and startup stops; it never silently switches the Pi to an unsupported driver or an unencrypted database. The v13 package is installed on all hosts but is not loaded on the Pi. All application, maintenance, verification and recovery snippets must use `lib/sqlite-driver.cjs` rather than importing the modern package directly on ARM32.
 
-`check:platform -- --raspberry-pi` fails unless run on the actual Linux ARM32 Debian 13 host. It checks the runtime/OS/glibc baseline, loads the JavaScript dependencies, creates and reopens a disposable encrypted SQLite WAL database, processes SVG/PNG/WebP/JPEG through Sharp, runs the native TypeScript compiler, and exercises tsx/esbuild. It never opens the production database or loads `.env`. Missing binaries, wrong Node ABI, and missing shared libraries are reported as failures. A metadata review or a passing Windows test does not replace this target-host check; hardware execution has to be confirmed on the Pi.
+`check:platform -- --raspberry-pi` fails unless run on the actual Linux ARM32 Debian / Raspberry Pi OS 11 or newer host. It checks the runtime/OS/glibc baseline, loads the JavaScript dependencies, creates and reopens a disposable encrypted SQLite WAL database, processes SVG/PNG/WebP/JPEG through Sharp, runs the native TypeScript compiler, and exercises tsx/esbuild. It never opens the production database or loads `.env`. Missing binaries, wrong Node ABI, and missing shared libraries are reported as failures. A metadata review or a passing Windows test does not replace this target-host check; hardware execution has to be confirmed on the Pi.
 
 For systemd, configure `WorkingDirectory=/srv/tls`, `Environment=PATH=/opt/tls-node22/bin:/usr/local/bin:/usr/bin:/bin`, and `ExecStart=/opt/tls-node22/bin/node /srv/tls/node_modules/tsx/dist/cli.mjs /srv/tls/server.ts`. This ensures the service and subprocesses use the selected Node 22 rather than Debian's Node 20. Preserve the existing service user, `.env`, permissions and restart policy. The PATH must also be used for maintenance commands. After a Node major or architecture change, reinstall from the lockfile before restarting.
 

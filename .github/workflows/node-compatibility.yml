@@ -3,6 +3,24 @@ on:
   push:
   pull_request:
 jobs:
+  bullseye-arm32:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm
+      - name: Verify Node 22 on Bullseye ARM32 (glibc 2.31)
+        run: |
+          docker run --rm --platform linux/arm/v7 \
+            -v "$PWD:/app" -w /app node:22-bullseye \
+            bash -ec 'npm ci --include=dev --include=optional
+            npm run check:platform -- --raspberry-pi
+            npm run typecheck
+            npm run build
+            npm run test:database
+            npm run test:server'
   test:
     strategy:
       fail-fast: false

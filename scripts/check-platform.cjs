@@ -16,12 +16,14 @@ function checkRuntime() {
     assert.equal(major, 22, 'Use Node.js 22 on 32-bit ARM: Node.js 24 downgraded ARMv7 to experimental.');
     assert.ok(Number(process.config.variables.arm_version) >= 7, 'ARMv7 or newer hardware is required; original Pi/Zero ARMv6 boards are unsupported.');
     const glibc = process.report.getReport().header.glibcVersionRuntime;
+    console.log(`[platform] Runtime libc: ${glibc ? `glibc ${glibc}` : 'not reported by Node (glibc could not be confirmed)'}`);
     const [glibcMajor, glibcMinor] = (glibc || '0.0').split('.').map(Number);
-    assert.ok(glibcMajor > 2 || (glibcMajor === 2 && glibcMinor >= 36), 'Sharp requires glibc >= 2.36 on 32-bit ARM. Use Debian 13 armhf (not Alpine/musl).');
+    assert.ok(glibcMajor > 2 || (glibcMajor === 2 && glibcMinor >= 31), `Sharp 0.34.5's prebuilt 32-bit ARM binary requires glibc >= 2.31; detected ${glibc || 'unknown libc'}. Check: getconf GNU_LIBC_VERSION and cat /etc/os-release. Use Debian / Raspberry Pi OS 11 or newer armhf (not Alpine/musl). Reinstalling Node does not upgrade the OS libc.`);
     if (process.argv.includes('--raspberry-pi')) {
       const release = fs.readFileSync('/etc/os-release', 'utf8');
       assert.match(release, /^ID=(?:"?debian"?|"?raspbian"?)$/m, 'Expected Debian or Raspberry Pi OS.');
-      assert.match(release, /^VERSION_ID="?13"?$/m, 'Expected Debian 13 / Raspberry Pi OS based on Debian 13.');
+      const releaseVersion = release.match(/^VERSION_ID="?(\d+)"?$/m);
+      assert.ok(releaseVersion && Number(releaseVersion[1]) >= 11, 'Expected Debian / Raspberry Pi OS 11 or newer.');
     }
     console.log(`[platform] linux/arm, ARMv${process.config.variables.arm_version}, glibc ${glibc}, Node ${process.versions.node}`);
   } else {
@@ -107,6 +109,6 @@ main().catch(error => {
     console.error('[platform] If Node 22 is installed as documented, select it first: export PATH="/opt/tls-node22/bin:$PATH"');
     console.error('[platform] If using nvm: nvm install 22 && nvm use 22');
   }
-  console.error('[platform] Install the documented Node version, then run npm ci --include=dev --include=optional on the target machine. Do not copy node_modules from another OS/CPU.');
+  console.error('[platform] Resolve the requirement reported above, then run npm ci --include=dev --include=optional on the target machine and npm run check:platform. Do not copy node_modules from another OS/CPU.');
   process.exitCode = 1;
 });
