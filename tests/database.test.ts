@@ -5,7 +5,7 @@ import os from 'os';
 import path from 'path';
 import { spawnSync } from 'child_process';
 import express from 'express';
-import Database from 'better-sqlite3-multiple-ciphers';
+import Database from '../lib/sqlite-driver.cjs';
 import { initDb, verifyPassword } from '../db';
 import adminRouter from '../routes/admin';
 import { databasePath, pendingPath, openEncrypted, validateDatabase, exportDatabase, applyPendingRestore } from '../lib/databaseMaintenance';

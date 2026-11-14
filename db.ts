@@ -4,7 +4,7 @@
  * seeds the initial admin user, and exposes typed helper functions.
  */
 
-import Database from 'better-sqlite3-multiple-ciphers';
+import Database from './lib/sqlite-driver.cjs';
 import type { Database as DB } from 'better-sqlite3';
 import path from 'path';
 import fs   from 'fs';

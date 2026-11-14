@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3-multiple-ciphers';
+import Database from './sqlite-driver.cjs';
 import type { Database as DB } from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';

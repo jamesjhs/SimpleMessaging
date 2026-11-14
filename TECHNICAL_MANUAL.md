@@ -41,7 +41,7 @@ TLS is a minimal, end-to-end encrypted, two-person secure messaging application.
 
 | Layer | Technology |
 |-------|-----------|
-| Runtime | Node.js 22 for 32-bit Raspberry Pi; 22 or 24 on other platforms |
+| Runtime | Node.js 22 for 32-bit Raspberry Pi; Node.js 22–26 on supported 64-bit hosts |
 | Language | TypeScript 7 (strict mode), compiled with `tsc` or run with `tsx` |
 | Web framework | Express 5 |
 | Database | SQLite via `better-sqlite3-multiple-ciphers` (SQLCipher AES-256-CBC) |
@@ -54,7 +54,7 @@ TLS is a minimal, end-to-end encrypted, two-person secure messaging application.
 | Frontend | Vanilla JS + CSS (no framework) |
 | PWA | Service Worker + Web App Manifest |
 
-The database package is pinned to `better-sqlite3-multiple-ciphers` 12.9.0 to preserve Linux ARM32 prebuilds. Version 13 drops these prebuilds. Sharp, TypeScript and tsx are also pinned, and the lockfile retains their Linux ARM optional packages. Use Node.js 22 on the Pi: Node 24's upstream ARMv7 status is experimental, even though the database package offers a Node 24 ARM binary. See section 15.1 for the complete dependency assessment and verification procedure.
+The shared `lib/sqlite-driver.cjs` loader uses `better-sqlite3-multiple-ciphers` 13.0.3 (Node-API) on supported modern hosts, allowing the same native module to run across Node 22–26 without a separate V8-ABI build for each major. Linux ARM32 automatically uses the optional `@tls/sqlite-arm32` package, whose native dependency remains pinned to 12.9.0 for its Node 22 prebuild. Version 13 has no ARMv7 prebuild. Sharp, TypeScript and tsx are also pinned, and the lockfile retains their Linux ARM optional packages. The Pi remains on Node 22; see section 15.1. Node 22 API type definitions remain the compile-time baseline so new code does not accidentally require a Node 26-only API.
 
 ---
 
@@ -626,13 +626,14 @@ Browser (recipient)                         Server                          DB
 
 The deployment target is **Debian 13 / Raspberry Pi OS based on Debian 13, 32-bit armhf userland, ARMv7 or newer CPU, glibc, and Node.js 22**. Pi 2/3/4/5 and Zero 2 class hardware with a compatible 32-bit OS are appropriate; original Pi 1 / Zero / Zero W ARMv6 hardware is outside this dependency target. A 64-bit kernel on 32-bit userland is possible: use `getconf LONG_BIT`, `dpkg --print-architecture`, and Node's `process.arch` rather than relying solely on `uname -m`.
 
-Node 22 lists Linux ARMv7 as Tier 1; Node 24 downgraded it to experimental. This repository selects Node 22 in `.nvmrc` and its installation/start checks reject Node 24 on Linux ARM32. Debian 13's standard `nodejs` package is Node 20, which does not meet this project's declared runtime. Install a maintained Node 22 ARMv7 build explicitly. See the [Node 22 support table](https://github.com/nodejs/node/blob/v22.x/BUILDING.md#platform-list), [Node 24 migration notes](https://nodejs.org/en/blog/migrations/v22-to-v24), and [Debian 13 nodejs package](https://packages.debian.org/trixie/nodejs).
+Node 22 lists Linux ARMv7 as Tier 1; Node 24 downgraded it to experimental. This repository selects Node 22 in `.nvmrc` and its installation/start checks require Node 22 on Linux ARM32. On other hosts the accepted runtime range is Node 22 through 26. Debian 13's standard `nodejs` package is Node 20, which does not meet this project's declared runtime. Install a maintained Node 22 ARMv7 build explicitly. See the [Node 22 support table](https://github.com/nodejs/node/blob/v22.x/BUILDING.md#platform-list), [Node 24 migration notes](https://nodejs.org/en/blog/migrations/v22-to-v24), and [Debian 13 nodejs package](https://packages.debian.org/trixie/nodejs).
 
 Dependency assessment for the locked versions:
 
 | Dependency | Version / target | ARM32 requirements |
 |---|---|---|
-| `better-sqlite3-multiple-ciphers` | 12.9.0 | Native Linux ARM prebuild for Node 22; keep the exact pin. SQLCipher is bundled; do not substitute Debian's ordinary SQLite binding. |
+| Database driver on Linux ARM32 | `@tls/sqlite-arm32` → 12.9.0 | Native Linux ARM prebuild for Node 22; keep the exact pin. SQLCipher is bundled; do not substitute Debian's ordinary SQLite binding. The local package is restricted to Linux ARM32 and is skipped on other hosts. |
+| Database driver on supported 64-bit hosts | `better-sqlite3-multiple-ciphers` 13.0.3 | Node-API binaries for Node 22–26 on Windows/Linux/macOS x64 and ARM64. Linux glibc builds require glibc >= 2.35. No ARMv7 binary; the shared loader selects the legacy Pi driver instead. |
 | `sharp` | 0.35.5 | `@img/sharp-linux-arm` 0.35.5 plus `@img/sharp-libvips-linux-arm` 1.3.4. The ARM libvips package requires glibc >= 2.36; Debian 13 meets this baseline. Keep optional dependencies installed. |
 | `dotenv`, `express`, `multer`, `nodemailer`, `web-push` | Locked 18.0.9 / 5.3.0 / 2.5.0 / 10.2.1 / 3.6.7 | JavaScript dependencies compatible with Node 22; no additional target-specific native module in their locked dependency trees. Crypto/TLS use Node's built-in implementation. |
 | `tsx` / `esbuild` | 4.23.15 / 0.28.2 | esbuild ships `@esbuild/linux-arm`; install its optional binary and allow its install script. Needed by `npm start`, maintenance CLI and tests. |
@@ -640,7 +641,7 @@ Dependency assessment for the locked versions:
 | `@types/*`, including `@types/node` 22.x | Locked development definitions | No native runtime; Node definitions match the Pi's Node 22 API baseline. |
 | Browser FFmpeg assets in `public/vendor/ffmpeg/` | JavaScript / WebAssembly | Execute in the client's browser, not as a server ARM executable. No server `ffmpeg` package is required. Browser memory and SharedArrayBuffer support still apply. |
 
-The native support is documented in the [database release](https://github.com/m4heshd/better-sqlite3-multiple-ciphers/releases/tag/v12.9.0), [Sharp installation guide](https://sharp.pixelplumbing.com/install/), [ARM libvips manifest](https://github.com/lovell/sharp-libvips/blob/main/npm/linux-arm/package.json), and [esbuild ARM manifest](https://github.com/evanw/esbuild/blob/v0.28.2/npm/@esbuild/linux-arm/package.json). Architecture-specific compiler entries can also be inspected directly in `package-lock.json`. The lockfile includes platform alternatives; npm selects only those appropriate for the target. Do not replace the pins with `latest` without rechecking ARM32 support.
+The native support is documented in the [Pi database release](https://github.com/m4heshd/better-sqlite3-multiple-ciphers/releases/tag/v12.9.0), [Node-API database release](https://github.com/m4heshd/better-sqlite3-multiple-ciphers/releases/tag/v13.0.3), [Sharp installation guide](https://sharp.pixelplumbing.com/install/), [ARM libvips manifest](https://github.com/lovell/sharp-libvips/blob/main/npm/linux-arm/package.json), and [esbuild ARM manifest](https://github.com/evanw/esbuild/blob/v0.28.2/npm/@esbuild/linux-arm/package.json). Architecture-specific compiler entries can also be inspected directly in `package-lock.json`. The lockfile includes platform alternatives; npm selects only those appropriate for the target. Do not replace the pins with `latest` without rechecking ARM32 support.
 
 Verify the machine first:
 
@@ -687,11 +688,35 @@ npm run test:database
 npm start
 ```
 
-Do not use `--omit=optional`, `--ignore-scripts`, or copy `node_modules` from Windows, ARM64, x64, or a different Node major. Install development dependencies because this project's start and database commands use `tsx`; TypeScript 7's native compiler and esbuild also need their target binaries. The `allowScripts` entry is not an npm security setting: npm's normal dependency install scripts must be allowed for the database and esbuild. If using another package manager, apply its own build-approval rules.
+Do not use `--omit=optional`, `--ignore-scripts`, or copy `node_modules` from Windows, ARM64, x64, or a different Node major. Install development dependencies because this project's start and database commands use `tsx`; TypeScript 7's native compiler and esbuild also need their target binaries. Package managers that enforce `allowScripts` must allow the Pi's 12.9.0 driver and esbuild install hooks. Version 13 already bundles its binaries and does not need an install-time rebuild; its approval entry is deliberately false. If using another package manager, apply its own build-approval rules.
+
+Keep `platform/sqlite-arm32/` and `.npmrc` in deployment checkouts: npm packs the local optional package using `install-links=true`, installs it only on Linux ARM32, and installs its nested native dependency at version 12.9.0. If that optional install fails, the platform check reports the missing Pi driver and startup stops; it never silently switches the Pi to an unsupported driver or an unencrypted database. The v13 package is installed on all hosts but is not loaded on the Pi. All application, maintenance, verification and recovery snippets must use `lib/sqlite-driver.cjs` rather than importing the modern package directly on ARM32.
 
 `check:platform -- --raspberry-pi` fails unless run on the actual Linux ARM32 Debian 13 host. It checks the runtime/OS/glibc baseline, loads the JavaScript dependencies, creates and reopens a disposable encrypted SQLite WAL database, processes SVG/PNG/WebP/JPEG through Sharp, runs the native TypeScript compiler, and exercises tsx/esbuild. It never opens the production database or loads `.env`. Missing binaries, wrong Node ABI, and missing shared libraries are reported as failures. A metadata review or a passing Windows test does not replace this target-host check; hardware execution has to be confirmed on the Pi.
 
 For systemd, configure `WorkingDirectory=/srv/tls`, `Environment=PATH=/opt/tls-node22/bin:/usr/local/bin:/usr/bin:/bin`, and `ExecStart=/opt/tls-node22/bin/node /srv/tls/node_modules/tsx/dist/cli.mjs /srv/tls/server.ts`. This ensures the service and subprocesses use the selected Node 22 rather than Debian's Node 20. Preserve the existing service user, `.env`, permissions and restart policy. The PATH must also be used for maintenance commands. After a Node major or architecture change, reinstall from the lockfile before restarting.
+
+### 15.2 Node 22–26 on other hosts
+
+For supported x64/ARM64 Windows, Linux and macOS hosts, select the desired Node version (22, 24 or 26 recommended), then install from the lockfile. The old Node 22/24-only restriction has been replaced with `>=22 <27`; this also accepts intermediate Node 23/25 releases, though maintained LTS lines are preferred. Future Node majors require verification before widening the declared range.
+
+```bash
+# With an existing nvm installation, for example:
+nvm install 26
+nvm use 26
+npm ci --include=dev --include=optional
+npm run check:platform
+npm run typecheck
+npm run test:database
+npm run test:server
+npm start
+```
+
+Stop a running local service before replacing its `node_modules`, especially on Windows where loaded native DLLs are locked. Use a separate checkout for testing another runtime while production remains online. Keep the service's explicit Node executable/PATH consistent with the version chosen for installation. `.nvmrc` stays at 22 for the Pi/default baseline and does not prohibit explicitly selecting 26 on other hosts.
+
+The database key derivation and cipher pragmas are unchanged. Existing 12.9.0 encrypted databases remain readable by the modern driver, and compatibility testing covers encrypted read/write round trips in both directions. Back up the database, media and original key before upgrading, and test a copy first. A Node runtime upgrade alone does not require decrypting/re-encrypting or resetting user passwords. Do not open the same database concurrently from separate deployments/drivers.
+
+The `Node compatibility` GitHub Actions workflow performs clean installation, platform checks, typechecking, compilation, admin recovery tests, and full server startup/login/export tests on Node 22, 24 and 26 for Windows and Linux. Its Node 22 Linux job also installs an isolated 12.9.0 driver to check encrypted-file interoperability with version 13. These checks do not replace running `check:platform -- --raspberry-pi` on the physical Pi.
 
 ### Quick Start (development)
 

@@ -13,13 +13,14 @@
     "typecheck": "tsc --noEmit",
     "database": "tsx scripts/database.ts",
     "test:database": "tsx --test tests/database.test.ts",
+    "test:server": "tsx --test tests/startup.test.ts",
     "check:platform": "node scripts/check-platform.cjs"
   },
   "engines": {
-    "node": "22.x || 24.x"
+    "node": ">=22 <27"
   },
   "dependencies": {
-    "better-sqlite3-multiple-ciphers": "12.9.0",
+    "better-sqlite3-multiple-ciphers": "13.0.3",
     "dotenv": "^18.0.9",
     "express": "^5.3.0",
     "multer": "^2.5.0",
@@ -37,8 +38,12 @@
     "tsx": "4.23.15",
     "typescript": "7.0.2"
   },
+  "optionalDependencies": {
+    "@tls/sqlite-arm32": "file:platform/sqlite-arm32"
+  },
   "allowScripts": {
     "better-sqlite3-multiple-ciphers@12.9.0": true,
+    "better-sqlite3-multiple-ciphers@13.0.3": false,
     "esbuild@0.28.2": true
   }
 }

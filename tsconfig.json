@@ -8,6 +8,7 @@
     "outDir":                          "./dist",
     "rootDir":                         "./",
     "strict":                          true,
+    "allowJs":                         true,
     "esModuleInterop":                 true,
     "skipLibCheck":                    true,
     "forceConsistentCasingInFileNames": true,
@@ -18,6 +19,7 @@
   },
   "include": [
     "**/*.ts",
+    "lib/sqlite-driver.cjs",
     "typings/**/*.d.ts"
   ],
   "exclude": [

@@ -1,0 +1,12 @@
+{
+  "name": "@tls/sqlite-arm32",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.cjs",
+  "os": ["linux"],
+  "cpu": ["arm"],
+  "engines": { "node": "22.x" },
+  "dependencies": {
+    "better-sqlite3-multiple-ciphers": "12.9.0"
+  }
+}

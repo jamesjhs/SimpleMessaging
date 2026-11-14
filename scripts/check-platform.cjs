@@ -11,7 +11,7 @@ function checkRuntime() {
   console.log(`[platform] Detected Node ${process.versions.node} on ${process.platform}/${process.arch}`);
   console.log(`[platform] Node executable: ${process.execPath}`);
   const major = Number(process.versions.node.split('.')[0]);
-  assert.ok([22, 24].includes(major), 'Use Node.js 22 (recommended) or 24; 32-bit Linux ARM requires Node.js 22.');
+  assert.ok(major >= 22 && major <= 26, 'Use Node.js 22 through 26; 32-bit Linux ARM requires Node.js 22.');
   if (process.platform === 'linux' && process.arch === 'arm') {
     assert.equal(major, 22, 'Use Node.js 22 on 32-bit ARM: Node.js 24 downgraded ARMv7 to experimental.');
     assert.ok(Number(process.config.variables.arm_version) >= 7, 'ARMv7 or newer hardware is required; original Pi/Zero ARMv6 boards are unsupported.');
@@ -32,8 +32,25 @@ function checkRuntime() {
 
 async function checkDependencies() {
   for (const name of ['dotenv', 'express', 'multer', 'nodemailer', 'web-push']) require(name);
+  const crypto = require('node:crypto');
+  const webPush = require('web-push');
+  const vapid = webPush.generateVAPIDKeys();
+  const subscriber = crypto.createECDH('prime256v1');
+  subscriber.generateKeys();
+  const pushRequest = webPush.generateRequestDetails({
+    endpoint: 'https://example.invalid/push-test',
+    keys: { p256dh: subscriber.getPublicKey().toString('base64url'), auth: crypto.randomBytes(16).toString('base64url') },
+  }, 'dependency compatibility check', {
+    vapidDetails: { subject: 'mailto:compatibility@example.invalid', publicKey: vapid.publicKey, privateKey: vapid.privateKey },
+  });
+  assert.ok(pushRequest.body.length > 0);
+  const mail = await require('nodemailer').createTransport({ jsonTransport: true }).sendMail({
+    from: 'compatibility@example.invalid', to: 'recipient@example.invalid', subject: 'Compatibility check', text: 'No network is used.',
+  });
+  assert.ok(mail.message);
+  console.log('[platform] Web push encryption/VAPID and email composition passed (no network)');
   // Exercise disk-backed encryption and WAL; never open the application's DB.
-  const Database = require('better-sqlite3-multiple-ciphers');
+  const Database = require('../lib/sqlite-driver.cjs');
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'tls-platform-'));
   const file = path.join(temp, 'probe.db');
   const key = 'ab'.repeat(32); // disposable test key, unrelated to .env
@@ -86,7 +103,7 @@ async function main() {
 }
 main().catch(error => {
   console.error(`[platform] FAILED: ${error.message}`);
-  if (process.platform === 'linux' && ![22, 24].includes(Number(process.versions.node.split('.')[0]))) {
+  if (process.platform === 'linux' && Number(process.versions.node.split('.')[0]) < 22) {
     console.error('[platform] If Node 22 is installed as documented, select it first: export PATH="/opt/tls-node22/bin:$PATH"');
     console.error('[platform] If using nvm: nvm install 22 && nvm use 22');
   }

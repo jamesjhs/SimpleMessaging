@@ -1,0 +1,30 @@
+name: Node compatibility
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+        node: [22, 24, 26]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --include=dev --include=optional
+      - run: npm run check:platform
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run test:database
+      - run: npm run test:server
+      - name: Install isolated Pi driver for encrypted-format compatibility test
+        if: matrix.node == 22 && runner.os == 'Linux'
+        run: npm install --prefix "$RUNNER_TEMP/tls-legacy-driver" --no-save --package-lock=false better-sqlite3-multiple-ciphers@12.9.0
+      - name: Check modern and Pi encrypted database interoperability
+        if: matrix.node == 22 && runner.os == 'Linux'
+        run: TLS_LEGACY_DRIVER="$RUNNER_TEMP/tls-legacy-driver/node_modules/better-sqlite3-multiple-ciphers" node tests/sqlite-compatibility.cjs
