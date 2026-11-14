@@ -49,6 +49,7 @@ function showSection(name) {
   if (name === 'users')    loadUsers();
   if (name === 'reports')  loadReports();
   if (name === 'settings') loadSettings();
+  if (name === 'database') loadDatabaseStatus();
 }
 
 async function logout() {
@@ -637,6 +638,73 @@ async function uploadIcon() {
 }
 
 // ── Utility ───────────────────────────────────────────────────────────────────
+
+let databaseValidationToken = null;
+let databaseBusy = false;
+async function loadDatabaseStatus() {
+  try {
+    const res = await apiFetch('/api/admin/database/status');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Cannot load database status');
+    document.getElementById('database-cancel').disabled = !data.pendingRestore;
+    document.getElementById('database-restart').disabled = !data.restartEnabled;
+    document.getElementById('database-status').textContent = data.pendingRestore
+      ? 'A restore is pending. Restart to apply, or cancel it.' : 'No restore pending.';
+  } catch (err) { document.getElementById('database-status').textContent = err.message; }
+}
+
+async function databaseAction(action) {
+  if (databaseBusy) return;
+  const status = document.getElementById('database-status');
+  databaseBusy = true;
+  try {
+    let body;
+    if (action === 'validate') {
+      databaseValidationToken = null;
+      document.getElementById('database-restore').disabled = true;
+      const file = document.getElementById('database-file').files[0];
+      if (!file || file.size > 256 * 1024 * 1024) throw new Error('Choose a database backup, maximum 256 MiB.');
+      body = new FormData();
+      body.append('database', file);
+    } else {
+      if (action === 'restore' && !document.getElementById('database-confirm').checked) throw new Error('Confirm that you understand the restore replaces database content.');
+      if (action === 'restart' && !window.confirm('Restart the server now? Any pending restore will replace the database.')) return;
+      body = JSON.stringify({
+        password: document.getElementById('database-password').value,
+        validationToken: databaseValidationToken,
+        confirm: action === 'restore' ? 'RESTORE' : 'RESTART',
+      });
+    }
+    status.textContent = 'Working…';
+    const res = await apiFetch(`/api/admin/database/${action === 'cancel' ? 'restore' : action}`, {
+      method: action === 'cancel' ? 'DELETE' : 'POST', body,
+      ...(action !== 'validate' ? { headers: { 'Content-Type': 'application/json' } } : {}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Database operation failed');
+    if (action === 'validate') {
+      databaseValidationToken = data.validationToken;
+      document.getElementById('database-restore').disabled = false;
+      status.textContent = `Validation passed: ${data.users} users, ${data.admins} enabled admins. Valid for 15 minutes. Media and configuration are separate backups.`;
+    } else {
+      document.getElementById('database-password').value = '';
+      if (action === 'restore') {
+        databaseValidationToken = null;
+        document.getElementById('database-restore').disabled = true;
+      }
+      if (action !== 'restart') await loadDatabaseStatus();
+      status.textContent = data.message || 'Pending restore cancelled.';
+    }
+  } catch (err) { status.textContent = err.message; }
+  finally { databaseBusy = false; }
+}
+document.getElementById('database-file').addEventListener('change', () => {
+  databaseValidationToken = null;
+  document.getElementById('database-restore').disabled = true;
+});
+for (const action of ['validate', 'restore', 'cancel', 'restart']) {
+  document.getElementById(`database-${action}`).addEventListener('click', () => databaseAction(action));
+}
 
 function esc(str) {
   if (!str) return '';

@@ -7,7 +7,8 @@ import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import path   from 'path';
 import fs     from 'fs';
-import { initDb, getSetting } from './db';
+import { initDb, getDb, getSetting } from './db';
+import { applyPendingRestore } from './lib/databaseMaintenance';
 import { getAppName } from './lib/appName';
 import { parseCookies, resolveSession } from './lib/auth';
 import { rateLimiter } from './lib/rateLimiter';
@@ -292,10 +293,18 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction): void 
 // ── Start ─────────────────────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT ?? '3333', 10);
 
-initDb().then(() => {
-  app.listen(PORT, () => {
+Promise.resolve().then(() => applyPendingRestore()).then(() => initDb()).then(() => {
+  const server = app.listen(PORT, () => {
     console.log(`${getAppName()} v${APP_VERSION} listening on http://localhost:${PORT}`);
   });
+  let restarting = false;
+  app.locals.restart = () => {
+    if (restarting) return;
+    restarting = true;
+    console.log('[server] Administrator requested restart');
+    server.close(() => { getDb().close(); process.exit(0); });
+    setTimeout(() => process.exit(0), 10_000).unref();
+  };
 }).catch((err: Error) => {
   console.error('[startup] Fatal:', err.message);
   process.exit(1);

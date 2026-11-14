@@ -18,6 +18,7 @@ import { FONT_OPTION_IDS, normalizeFontOption }         from '../lib/fontOptions
 import { MEDIA_SETTING_KEYS, MEDIA_SETTING_OPTIONS, normalizeMediaSetting } from '../lib/mediaSettings';
 import { getPasswordPolicyError }                  from '../lib/passwordPolicy';
 import type { DbUser, UserRole }                       from '../types';
+import databaseRouter from './database';
 
 const router  = Router();
 const jsonUp  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -135,6 +136,7 @@ router.use(
   requireAdmin,
   rateLimiter({ windowMs: 60_000, max: 120 }),
 );
+router.use('/database', databaseRouter);
 
 // ── In-memory preview store for two-step import ───────────────────────────────
 
@@ -176,7 +178,7 @@ setInterval(() => {
   for (const [k, v] of importPreviews) {
     if (v.expiresAt < now) importPreviews.delete(k);
   }
-}, 5 * 60_000);
+}, 5 * 60_000).unref();
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
 

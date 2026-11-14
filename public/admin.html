@@ -14,11 +14,29 @@
       <button class="nav-tab" data-section="reports">🚨 Reports</button>
       <button class="nav-tab" data-section="settings">⚙️ Settings</button>
       <button class="nav-tab" data-section="import">📥 Import / Export</button>
+      <button class="nav-tab" data-section="database">Database</button>
     </div>
     <button class="nav-logout" id="admin-logout-btn">Logout</button>
   </nav>
 
   <div class="admin-content">
+    <section id="section-database" class="admin-section">
+      <div class="section-header"><h2>Database recovery</h2></div>
+      <p class="help-text">Export an encrypted database backup. Keep its original DB_ENCRYPTION_KEY securely and back up uploads, custom icons, and server configuration separately.</p>
+      <p><a class="btn-secondary" href="/api/admin/database/export">Download database export</a></p>
+      <p class="help-text">Choose a backup from this release (maximum 256 MiB), then Validate. Restore replaces all database content on the next restart. Changes after the backup will be lost from the restored database. A recovery copy of the current database is retained on the server. All users must sign in again using the backup's credentials.</p>
+      <label for="database-file">Encrypted database backup</label>
+      <input id="database-file" type="file" accept=".db,application/octet-stream">
+      <button type="button" class="btn-secondary" id="database-validate">Validate</button>
+      <p><label for="database-password">Current admin password</label>
+      <input id="database-password" type="password" autocomplete="current-password"></p>
+      <p><label><input id="database-confirm" type="checkbox"> I understand that restore replaces database content when the server restarts.</label></p>
+      <button type="button" class="btn-primary" id="database-restore" disabled>Stage restore</button>
+      <button type="button" class="btn-secondary" id="database-cancel" disabled>Cancel pending restore</button>
+      <button type="button" class="btn-secondary" id="database-restart" disabled>Restart</button>
+      <p id="database-status" role="status" aria-live="polite"></p>
+      <p class="help-text">Restart requires a server process supervisor and ADMIN_RESTART_ENABLED=true. Otherwise, restart the service on the server. See Technical Manual section 16 for full recovery and admin account reset instructions.</p>
+    </section>
 
     <!-- ── Users section ─────────────────────────────────────── -->
     <section id="section-users" class="admin-section active">

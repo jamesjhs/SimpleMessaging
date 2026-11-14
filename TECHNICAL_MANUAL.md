@@ -22,6 +22,7 @@
 13. [Security Model](#13-security-model)
 14. [Data Flows](#14-data-flows)
 15. [Deployment](#15-deployment)
+16. [Database Export, Restore and Admin Recovery](#16-database-export-restore-and-admin-recovery)
 
 ---
 
@@ -40,7 +41,7 @@ TLS is a minimal, end-to-end encrypted, two-person secure messaging application.
 
 | Layer | Technology |
 |-------|-----------|
-| Runtime | Node.js 22 or 24 |
+| Runtime | Node.js 22 for 32-bit Raspberry Pi; 22 or 24 on other platforms |
 | Language | TypeScript 7 (strict mode), compiled with `tsc` or run with `tsx` |
 | Web framework | Express 5 |
 | Database | SQLite via `better-sqlite3-multiple-ciphers` (SQLCipher AES-256-CBC) |
@@ -53,7 +54,7 @@ TLS is a minimal, end-to-end encrypted, two-person secure messaging application.
 | Frontend | Vanilla JS + CSS (no framework) |
 | PWA | Service Worker + Web App Manifest |
 
-The database package is pinned to `better-sqlite3-multiple-ciphers` 12.9.0 to support the 32-bit Raspberry Pi deployment. This release provides Linux ARM prebuilt binaries for Node.js 22 and 24. Keep the exact version pin: version 13 drops Linux armv7 prebuilt binaries.
+The database package is pinned to `better-sqlite3-multiple-ciphers` 12.9.0 to preserve Linux ARM32 prebuilds. Version 13 drops these prebuilds. Sharp, TypeScript and tsx are also pinned, and the lockfile retains their Linux ARM optional packages. Use Node.js 22 on the Pi: Node 24's upstream ARMv7 status is experimental, even though the database package offers a Node 24 ARM binary. See section 15.1 for the complete dependency assessment and verification procedure.
 
 ---
 
@@ -281,7 +282,7 @@ Comparison uses `crypto.timingSafeEqual` to prevent timing attacks.
 
 ## 7. API Endpoints
 
-All API responses are JSON. Authentication errors return HTTP 401; authorisation errors return 403.
+API responses are JSON except downloadable database/post exports. Authentication errors return HTTP 401; authorisation errors return 403.
 
 ### Auth — `/api/auth`
 
@@ -325,6 +326,12 @@ All routes require `role = 'admin'`.
 | POST | `/icon` | Uploads a JPG, PNG, or WebP icon and generates compliant favicon, Apple touch icon, standard PWA icons, and maskable PWA icons. |
 | POST | `/import/preview` | Preview a legacy `posts.json` import and return suggested user mappings. |
 | POST | `/import/commit` | Commit a previewed import with admin-selected mappings. Returns `{ imported, skipped, createdUsers }`. |
+| GET | `/database/status` | Pending restore status, restart availability, and upload size limit. |
+| GET | `/database/export` | Downloads a consistent encrypted `.db` snapshot, including committed WAL data. |
+| POST | `/database/validate` | Multipart field `database` (256 MiB maximum); checks key, integrity, foreign keys, schema and enabled admin; returns `validationToken`, `users`, `admins`, `expiresInSeconds`. |
+| POST | `/database/restore` | JSON `{ validationToken, password, confirm: "RESTORE" }`; stages the validated backup for next startup. |
+| DELETE | `/database/restore` | JSON `{ password }`; cancels the pending restore. |
+| POST | `/database/restart` | JSON `{ password, confirm: "RESTART" }`; returns 202 then exits gracefully for the supervisor to relaunch. Disabled unless `ADMIN_RESTART_ENABLED=true`. |
 
 ### Infrastructure
 
@@ -615,13 +622,85 @@ Browser (recipient)                         Server                          DB
 
 ## 15. Deployment
 
+### 15.1 32-bit Raspberry Pi Debian 13
+
+The deployment target is **Debian 13 / Raspberry Pi OS based on Debian 13, 32-bit armhf userland, ARMv7 or newer CPU, glibc, and Node.js 22**. Pi 2/3/4/5 and Zero 2 class hardware with a compatible 32-bit OS are appropriate; original Pi 1 / Zero / Zero W ARMv6 hardware is outside this dependency target. A 64-bit kernel on 32-bit userland is possible: use `getconf LONG_BIT`, `dpkg --print-architecture`, and Node's `process.arch` rather than relying solely on `uname -m`.
+
+Node 22 lists Linux ARMv7 as Tier 1; Node 24 downgraded it to experimental. This repository selects Node 22 in `.nvmrc` and its installation/start checks reject Node 24 on Linux ARM32. Debian 13's standard `nodejs` package is Node 20, which does not meet this project's declared runtime. Install a maintained Node 22 ARMv7 build explicitly. See the [Node 22 support table](https://github.com/nodejs/node/blob/v22.x/BUILDING.md#platform-list), [Node 24 migration notes](https://nodejs.org/en/blog/migrations/v22-to-v24), and [Debian 13 nodejs package](https://packages.debian.org/trixie/nodejs).
+
+Dependency assessment for the locked versions:
+
+| Dependency | Version / target | ARM32 requirements |
+|---|---|---|
+| `better-sqlite3-multiple-ciphers` | 12.9.0 | Native Linux ARM prebuild for Node 22; keep the exact pin. SQLCipher is bundled; do not substitute Debian's ordinary SQLite binding. |
+| `sharp` | 0.35.5 | `@img/sharp-linux-arm` 0.35.5 plus `@img/sharp-libvips-linux-arm` 1.3.4. The ARM libvips package requires glibc >= 2.36; Debian 13 meets this baseline. Keep optional dependencies installed. |
+| `dotenv`, `express`, `multer`, `nodemailer`, `web-push` | Locked 18.0.9 / 5.3.0 / 2.5.0 / 10.2.1 / 3.6.7 | JavaScript dependencies compatible with Node 22; no additional target-specific native module in their locked dependency trees. Crypto/TLS use Node's built-in implementation. |
+| `tsx` / `esbuild` | 4.23.15 / 0.28.2 | esbuild ships `@esbuild/linux-arm`; install its optional binary and allow its install script. Needed by `npm start`, maintenance CLI and tests. |
+| `typescript` | 7.0.2 | Native compiler ships `@typescript/typescript-linux-arm`; install optional dependencies even for build-only use. |
+| `@types/*`, including `@types/node` 22.x | Locked development definitions | No native runtime; Node definitions match the Pi's Node 22 API baseline. |
+| Browser FFmpeg assets in `public/vendor/ffmpeg/` | JavaScript / WebAssembly | Execute in the client's browser, not as a server ARM executable. No server `ffmpeg` package is required. Browser memory and SharedArrayBuffer support still apply. |
+
+The native support is documented in the [database release](https://github.com/m4heshd/better-sqlite3-multiple-ciphers/releases/tag/v12.9.0), [Sharp installation guide](https://sharp.pixelplumbing.com/install/), [ARM libvips manifest](https://github.com/lovell/sharp-libvips/blob/main/npm/linux-arm/package.json), and [esbuild ARM manifest](https://github.com/evanw/esbuild/blob/v0.28.2/npm/@esbuild/linux-arm/package.json). Architecture-specific compiler entries can also be inspected directly in `package-lock.json`. The lockfile includes platform alternatives; npm selects only those appropriate for the target. Do not replace the pins with `latest` without rechecking ARM32 support.
+
+Verify the machine first:
+
+```bash
+cat /etc/os-release
+dpkg --print-architecture       # armhf
+getconf LONG_BIT                # 32
+getconf GNU_LIBC_VERSION        # glibc >= 2.36
+```
+
+If Node 22 is not already installed, the following installs the latest official Node 22 ARMv7 tarball into a dedicated prefix. Run this on the Pi, not on the Windows development workstation. If a Node version manager is already installed, `nvm install` / `nvm use` from the project directory uses `.nvmrc` instead.
+
+```bash
+sudo apt update
+sudo apt install -y ca-certificates curl xz-utils python3 make g++ pkg-config fonts-dejavu-core
+tls_node_tmp=$(mktemp -d)
+cd "$tls_node_tmp"
+curl --fail --location --remote-name https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt
+tls_node_archive=$(awk '$2 ~ /-linux-armv7l.tar.xz$/ {print $2}' SHASUMS256.txt)
+test -n "$tls_node_archive"
+curl --fail --location --remote-name "https://nodejs.org/dist/latest-v22.x/$tls_node_archive"
+awk '$2 ~ /-linux-armv7l.tar.xz$/ {print}' SHASUMS256.txt > SHASUMS-arm.txt
+sha256sum --check SHASUMS-arm.txt
+# Continue only if the download and checksum succeeded.
+sudo mkdir -p /opt/tls-node22
+sudo tar -xJf "$tls_node_archive" -C /opt/tls-node22 --strip-components=1
+export PATH="/opt/tls-node22/bin:$PATH"
+node --version                 # v22.x
+node -p 'process.platform + "/" + process.arch'  # linux/arm
+```
+
+Keep this Node 22 installation updated with maintenance/security releases. The compiler packages above are fallback prerequisites if a database prebuild cannot be downloaded; the usual installation uses prebuilds. A source build can take substantial memory/time on a Pi. Avoid globally installing `libvips-dev` just for this app: use Sharp's bundled libvips, since Debian's libvips may be older than Sharp's required version. If a global libvips interferes, set `SHARP_IGNORE_GLOBAL_LIBVIPS=1` while installing. `fonts-dejavu-core` supplies predictable fonts for SVG/text rendering; no X11/desktop is needed.
+
+Install into a fresh project checkout on the target using the committed lockfile:
+
+```bash
+cd /srv/tls
+export PATH="/opt/tls-node22/bin:$PATH"
+npm ci --include=dev --include=optional
+npm run check:platform -- --raspberry-pi
+npm run typecheck
+npm run test:database
+# Configure .env, then:
+npm start
+```
+
+Do not use `--omit=optional`, `--ignore-scripts`, or copy `node_modules` from Windows, ARM64, x64, or a different Node major. Install development dependencies because this project's start and database commands use `tsx`; TypeScript 7's native compiler and esbuild also need their target binaries. The `allowScripts` entry is not an npm security setting: npm's normal dependency install scripts must be allowed for the database and esbuild. If using another package manager, apply its own build-approval rules.
+
+`check:platform -- --raspberry-pi` fails unless run on the actual Linux ARM32 Debian 13 host. It checks the runtime/OS/glibc baseline, loads the JavaScript dependencies, creates and reopens a disposable encrypted SQLite WAL database, processes SVG/PNG/WebP/JPEG through Sharp, runs the native TypeScript compiler, and exercises tsx/esbuild. It never opens the production database or loads `.env`. Missing binaries, wrong Node ABI, and missing shared libraries are reported as failures. A metadata review or a passing Windows test does not replace this target-host check; hardware execution has to be confirmed on the Pi.
+
+For systemd, configure `WorkingDirectory=/srv/tls`, `Environment=PATH=/opt/tls-node22/bin:/usr/local/bin:/usr/bin:/bin`, and `ExecStart=/opt/tls-node22/bin/node /srv/tls/node_modules/tsx/dist/cli.mjs /srv/tls/server.ts`. This ensures the service and subprocesses use the selected Node 22 rather than Debian's Node 20. Preserve the existing service user, `.env`, permissions and restart policy. The PATH must also be used for maintenance commands. After a Node major or architecture change, reinstall from the lockfile before restarting.
+
 ### Quick Start (development)
 
 ```bash
 cp .env.example .env
 # Fill in DB_ENCRYPTION_KEY, ADMIN_USERNAME, ADMIN_PASSWORD
-npm install
-npm start        # tsx server.ts – hot-reloads on file change
+npm ci --include=dev --include=optional
+npm run check:platform
+npm start        # tsx server.ts; use npm run dev for file watching
 ```
 
 ### Production
@@ -664,12 +743,150 @@ curl https://chat.example.com/readyz
 
 ### Data Backup
 
-Back up the encrypted database file and keep the `DB_ENCRYPTION_KEY` separately secured. The database file alone is useless without the key.
+Use the admin Database export or the maintenance command described in section 16. Do not copy a running SQLite main file with `cp`: recently committed data can still be in its WAL. Keep the original `DB_ENCRYPTION_KEY` separately secured. The database file alone cannot be recovered without the key.
 
 ```bash
-cp data/tls.db backups/tls-$(date +%Y%m%d).db
+npm run database -- export /secure/backups/tls-backup.db
 ```
 
 ### File Storage
 
 Uploaded media is stored in the `uploads/` directory. This directory must be backed up alongside the database to preserve message attachments. It is excluded from source control (`.gitignore`).
+
+## 16. Database Export, Restore and Admin Recovery
+
+### 16.1 Scope and prerequisites
+
+The **Database** tab appears only in the protected admin panel. All database HTTP routes sit under `/api/admin/database`, behind the existing session, enabled-account, admin-role and CSRF checks. Accounts with a required password change must change it first. An adult or ordinary user cannot use these endpoints. Unsafe requests must include `X-CSRF-Token` obtained through the signed-in session's `/api/auth/csrf` endpoint. Restore, cancellation and restart additionally require the current administrator password and are limited to five attempts per minute per IP, within the admin router's existing limit.
+
+Exports contain the entire encrypted database: accounts, password hashes, messages, settings, reports and other database records. They are distinct from the existing posts JSON export. Protect them as sensitive backups. Store the original `DB_ENCRYPTION_KEY` in a separate secure location; neither this tool nor an admin password reset can recover a lost encryption key. Restore accepts databases readable using the server's current key and this release's required schema. Migrate older backups in an isolated installation first; do not assume a backup from another release is compatible.
+
+A database export does **not** contain `uploads/`, custom icons in `public/`, `.env`, TLS/proxy configuration, application code or dependencies. Preserve these separately, together with the deployed app version. Take a coordinated filesystem backup with the service stopped if media and database must represent exactly the same moment. Use a single application process per database; stop every process/container that opens the database before offline restore or account reset. The `--server-stopped` flag is an operator acknowledgement, not automatic process detection.
+
+`DB_PATH` is resolved relative to the working directory, while media and public assets are relative to the running server module. With `npm start`, these are the project `uploads/` and `public/`; when running `dist/server.js`, they are `dist/uploads/` and `dist/public/`. Adjust the archive/restore examples to the paths actually used by your service. Run the maintenance CLI with the same working directory and database environment as that service.
+
+### 16.2 Export and download in the admin panel
+
+1. Sign in as an administrator, complete any required password change, and open **Admin → Database**.
+2. Select **Download database export**. Save the dated `.db` file in secure backup storage. The server checkpoints committed WAL data and holds a write lock while copying the encrypted file. If the database is busy, retry during a quieter period. Large snapshots and validation can temporarily delay other requests.
+3. Save the matching media, custom icons and server configuration separately. Record the application version and the backup time.
+4. Test the downloaded file using **Validate**. Retain the backup only after validation succeeds. Validation tests readability with the current key, SQLite integrity, foreign keys, required tables/columns, absence of unexpected triggers/views, and presence of an enabled admin. It does not prove attachment availability, credential knowledge, or provenance; restore only trusted backups.
+
+The downloaded database remains encrypted. A temporary server-side export is deleted after transfer. Validation uploads are private temporary files, limited to 256 MiB, with a 15-minute, single-use token bound to the validating session. Expired files are cleaned every minute; normal process exit cleans the temporary directory. A forced kill can leave an operating-system temporary directory named `tls-database-*`; remove orphan directories only after confirming no TLS process uses them. Larger backups use the server CLI instead of the web upload path. Set the reverse proxy's upload limit (for nginx, `client_max_body_size 257m;`) and timeouts to accommodate the database plus multipart overhead.
+
+### 16.3 Validate, stage restore, and restart
+
+1. Arrange a maintenance window. Download a fresh export of the current database and preserve current media/configuration before proceeding. Database restore replaces all database records; changes made after the backup will no longer appear in the restored database.
+2. Choose the encrypted backup in **Database**, select **Validate**, and inspect the reported user/admin counts. A successful validation does not modify the live database. Wrong-key, damaged, incompatible, and admin-less files are rejected. Selecting a different file requires another validation.
+3. Within 15 minutes, enter your **current admin password**, tick the replacement acknowledgement, and select **Stage restore**. The server validates again and stores a private copy beside `DB_PATH`, at `<DB_PATH>.restore-pending`. Only one restore can be pending. This survives a process restart. It has not yet replaced the live database. Writes can still occur until restart and will be absent from the restored snapshot.
+4. To abandon it, enter the current admin password and select **Cancel pending restore** before restarting. You may then validate and stage a different file.
+5. Restore matching `uploads/` and icons during downtime if needed. Select **Restart**, enter the current admin password if cleared, and confirm, or restart the service from the server. Restart also works when no restore is pending. A successful HTTP 202 means the restart was requested; it does not mean the restored service is ready.
+6. On startup, before opening the application database or accepting HTTP requests, the server revalidates the pending file, checkpoints and copies the previous live database to `<DB_PATH>.before-restore-<time>-<uuid>`, prepares a restored copy, removes all sessions, OTP tokens and push subscriptions, validates it, then replaces the database. The pending file is removed after successful replacement. Authentication data from the backup cannot resume old logged-in sessions; users must sign in again and register push notifications again. The retained recovery file includes pre-restore credentials/sessions and needs the same protection as an export.
+7. Wait for `/readyz` to return success; inspect server startup logs for the restore result. Sign in with an admin account/password **from the backup**, complete any password-change/2FA requirements, and verify users, settings, recent messages, reports, attachments and view-once state. If credentials are unknown or 2FA mail is unavailable, follow section 16.7.
+
+Ensure enough free space for the live database, upload, pending file, working copy and recovery copy. No pending file is served as a public asset. Keep database directories outside `public/` and restrict filesystem access to the service account and backup operators. If startup validation fails, startup stops rather than serving a partially restored database. Preserve logs and files, stop the service, and inspect `<DB_PATH>.restore-pending`. Move it to secure quarantine to cancel a failed pending restore before starting the prior database. If replacement already happened, use the retained recovery copy via section 16.6. Do not delete recovery copies until the restored installation has been checked and retention policy permits deletion.
+
+### 16.4 Configuring Restart
+
+The Restart option deliberately exits the current Node process with code 0 after its HTTP response completes, allowing up to ten seconds for outstanding connections. It relies on a service supervisor to start a fresh process. It does not execute shell commands, install a supervisor or relaunch itself. Leave `ADMIN_RESTART_ENABLED=false` when running in a terminal; use Ctrl+C followed by `npm start` instead. Avoid a file-watching development runner for production recovery.
+
+For an existing systemd service named `tls`, configure its unit with `Restart=always` and an appropriate `RestartSec` (for example `2`), then reload systemd. `Restart=on-failure` alone does not relaunch a successful exit. For a container, configure a restart policy that includes clean exits. Only after verifying the supervisor, set `ADMIN_RESTART_ENABLED=true` in the service environment and restart normally. The UI then enables Restart. A manually issued `systemctl stop tls` still keeps a systemd service stopped during offline maintenance. Use your actual service name/path in the examples below. Supervisors with retry limits must be monitored after a failed startup.
+
+### 16.5 Manual export and download from the server
+
+Run commands from the project directory, under the service account, with the correct `.env`, `DB_PATH` and original `DB_ENCRYPTION_KEY`. CLI commands load `.env`; existing shell environment variables take precedence. Do not print the key or put passwords on command lines. The CLI uses the same encrypted database library and PBKDF2 key derivation as the application; a generic SQLite CLI cannot open these files with the passphrase alone.
+
+For a consistent encrypted database export while the app is running:
+
+```bash
+cd /srv/tls
+umask 077
+mkdir -p /secure/backups
+npm run database -- export /secure/backups/tls-backup.db
+npm run database -- validate /secure/backups/tls-backup.db
+sha256sum /secure/backups/tls-backup.db
+```
+
+Use a unique destination filename: export refuses to overwrite an existing file. Export checkpoints the WAL and acquires a write lock; retry if there are active writers. Validation prints counts on success and returns a nonzero exit code on failure. Do not use a backup that fails validation.
+
+For a coordinated full backup, first stop the service, run the export, and archive `uploads/`, custom icons and configuration into separately protected backup storage. Restart the service after the archive is complete. Example media backup:
+
+```bash
+sudo systemctl stop tls
+npm run database -- export /secure/backups/tls-offline.db
+tar -czf /secure/backups/tls-uploads.tar.gz uploads
+# Separately preserve .env, custom public icons, service and proxy configuration.
+sudo systemctl start tls
+```
+
+From a trusted workstation, download through SSH/SCP; use an account allowed to read these private files, or have the server operator transfer them into a restricted download directory first. Do not make them world-readable or expose them through the web root:
+
+```bash
+scp backupuser@server:/secure/backups/tls-backup.db ./tls-backup.db
+scp backupuser@server:/secure/backups/tls-uploads.tar.gz ./tls-uploads.tar.gz
+sha256sum ./tls-backup.db
+# On PowerShell: Get-FileHash ./tls-backup.db -Algorithm SHA256
+```
+
+Compare the downloaded checksum with the server checksum. This detects transfer changes; it is not proof that the backup is trustworthy. Keep encryption keys/configuration in separate encrypted storage. If the application cannot start, preserve the main `.db`, its `-wal` and `-shm` files as one stopped-server recovery set before troubleshooting. Never copy only the main file of a running WAL database. Prefer the maintenance export over restoring raw WAL files.
+
+### 16.6 Manual restoration and rollback
+
+1. Transfer the trusted `.db` backup to a private server directory using SCP. Install the matching application release and dependencies. Restore the original key in the service configuration; changing `ADMIN_PASSWORD` does not change existing accounts. Confirm the intended absolute `DB_PATH`; do not inadvertently create a new empty database at another path.
+2. Stop the service and every other database writer, and disable any orchestrator that would immediately replace a stopped process. Preserve a complete current backup and matching media/configuration.
+3. Run validation, then offline restore. `--server-stopped` confirms you have stopped all processes. These commands never start the HTTP server:
+
+```bash
+cd /srv/tls
+sudo systemctl stop tls
+npm run database -- validate /secure/incoming/tls-backup.db
+npm run database -- restore /secure/incoming/tls-backup.db --server-stopped
+```
+
+4. Resolve any existing pending restore before using the offline restore command: inspect it and move it to secure quarantine if cancelling it. The CLI refuses to overwrite a pending restore. Offline restoration uses the same validation, recovery copy and session revocation as startup restoration. If the current database is corrupt and cannot be checkpointed, the automatic safety copy fails and replacement is refused. While fully stopped, preserve the corrupt main file **and its sidecars** in secure quarantine, then retry against the now absent target; retain that quarantine for investigation.
+5. Restore matching media to the application's `uploads/` and custom icons to `public/`. Preserve current copies first and check archive paths before extraction. Match ownership and directory/file permissions to the service account. If media was deleted after the backup, a database-only restore cannot recreate it.
+6. Start and check the service:
+
+```bash
+sudo systemctl start tls
+sudo journalctl -u tls -n 100 --no-pager
+curl --fail http://127.0.0.1:3333/readyz
+```
+
+7. Sign in using backup credentials and complete the functional checks in section 16.3. To roll back, stop the service again, validate the desired `.before-restore-*` recovery file, then pass its path to the same `restore ... --server-stopped` command. Use the separately preserved media/configuration that belongs to that recovery point. A new safety copy will be made and login tokens revoked again.
+
+On Windows use the service manager for the actual service, or stop the foreground Node process. From PowerShell, `Set-Location C:\GitHub\TLS` and the same `npm run database -- ...` commands work. Supply quoted absolute Windows paths. Ensure no second Node process still holds the database open.
+
+### 16.7 Admin account reset
+
+If another administrator can sign in, use **Admin → Users → Edit** to set a new password, enable the account, clear its locked status and adjust 2FA as needed. The user must change the temporary password on next login. If no administrator can sign in, use the offline reset command below. The existing admin username must be known; the command changes only an existing admin and refuses ordinary users or unknown usernames. Changing `.env` `ADMIN_PASSWORD` alone does not reset an existing account: those variables seed an absent account only.
+
+First stop all service processes, preserve a current backup and verify the original database key. Read a temporary password without putting it in shell history. It must contain at least 12 characters and at least three of lowercase, uppercase, digits and symbols.
+
+```bash
+cd /srv/tls
+sudo systemctl stop tls
+read -r -s -p 'Temporary admin password: ' RESET_ADMIN_PASSWORD
+echo
+export RESET_ADMIN_PASSWORD
+npm run database -- reset-admin admin --server-stopped
+unset RESET_ADMIN_PASSWORD
+sudo systemctl start tls
+```
+
+PowerShell equivalent (stop the service first and replace `admin` with the existing username):
+
+```powershell
+Set-Location C:\GitHub\TLS
+$resetSecret = Read-Host 'Temporary admin password' -AsSecureString
+$env:RESET_ADMIN_PASSWORD = [System.Net.NetworkCredential]::new('', $resetSecret).Password
+try {
+  npm run database -- reset-admin admin --server-stopped
+} finally {
+  Remove-Item Env:RESET_ADMIN_PASSWORD
+  $resetSecret.Dispose()
+}
+# Start the actual Windows service, or run npm start in the project directory.
+```
+
+Check the command's exit code before starting the service. The reset hashes the temporary password with the application's scrypt implementation, enables/unlocks the account, clears failed login counters, disables email 2FA for recovery, requires a password change, and revokes that admin's sessions, OTPs and push subscriptions. It does not print the password or change other accounts. Sign in, immediately change the temporary password, verify SMTP access and re-enable 2FA. Clear the temporary environment variable even after an error and never store it in `.env`. This procedure requires trusted server access and the original database key; it provides no public account-reset endpoint.

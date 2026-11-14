@@ -35,14 +35,18 @@ A self-hosted, end-to-end encrypted two-person chat application built with **Nod
 
 ### 1. Prerequisites
 
-- **Node.js 22 or 24** (production target: Node.js 24)
+- **Node.js 22** for 32-bit Raspberry Pi Debian 13 / Raspberry Pi OS (ARMv7 or newer). Node 24 is accepted on other platforms; Linux ARM32 is experimental upstream in Node 24 and is rejected by this project's runtime check.
 - The database package is pinned to `better-sqlite3-multiple-ciphers` 12.9.0 for 32-bit Raspberry Pi (Linux ARM) support. Keep this pin when updating dependencies; version 13 drops Linux armv7 prebuilt binaries.
 - A working **SMTP** server for OTP and invite emails
+- See [32-bit Raspberry Pi installation and dependency checks](TECHNICAL_MANUAL.md#151-32-bit-raspberry-pi-debian-13) for the Node 22 installation procedure, native dependency matrix, and target verification.
 
 ### 2. Install dependencies
 
 ```bash
-npm install
+npm ci --include=dev --include=optional
+npm run check:platform
+# On the target 32-bit Pi:
+# npm run check:platform -- --raspberry-pi
 ```
 
 ### 3. Configure environment
@@ -140,6 +144,8 @@ public/
 Private / proprietary – all rights reserved.
 
 ## Password reset
+
+For full encrypted database export/validation/restoration, restart setup, manual server downloads, rollback, and offline admin recovery, see [Technical Manual section 16](TECHNICAL_MANUAL.md#16-database-export-restore-and-admin-recovery). These tools are available in **Admin → Database** and through `npm run database -- ...` on the server.
 
 # Powershell
 

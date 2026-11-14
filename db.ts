@@ -19,7 +19,7 @@ let db: DB | null = null;
  * Using PBKDF2 rather than a bare hash makes brute-force attacks significantly harder.
  * The salt is fixed (non-secret); security derives from the passphrase remaining secret.
  */
-function deriveDbKey(passphrase: string): string {
+export function deriveDbKey(passphrase: string): string {
   const salt = Buffer.from('tls-db-key-v1', 'utf8');
   return crypto.pbkdf2Sync(passphrase, salt, 100_000, 32, 'sha256').toString('hex');
 }
@@ -239,7 +239,7 @@ export async function initDb(): Promise<DB> {
     const now = Date.now();
     db!.prepare('DELETE FROM sessions   WHERE expires_at < ?').run(now);
     db!.prepare('DELETE FROM otp_tokens WHERE expires_at < ?').run(now);
-  }, 60 * 60 * 1000);
+  }, 60 * 60 * 1000).unref();
 
   console.log(`[db] Database ready at ${dbPath}`);
   return db;
