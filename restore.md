@@ -20,6 +20,8 @@ Service definitions, reverse-proxy configuration and HTTPS certificates may have
 
 Stop every process or container that opens the database, including development watchers. Disable automatic restarts during recovery. The CLI's `--server-stopped` option is your acknowledgement; it does not stop or detect running processes.
 
+If PM2 manages this app, run `pm2 stop tls --watch` under the account that owns its PM2 process list, replacing `tls` with the actual process name. Check `pm2 status` to confirm it is stopped. Keep it stopped through steps 2–5 and do not reboot or run `pm2 resurrect` during recovery, as a previously saved process list could bring it back.
+
 Back up the new installation's data and configuration before replacing anything. Preserve its database and sidecars together. Keep recovery files private and outside `public/`.
 
 If the saved folder was copied while the old app was running, the copy may be inconsistent. Preserve everything available; validation is required before using it.
@@ -122,6 +124,58 @@ Restore the service definition, startup command, working directory, reverse prox
 ## 6. Start and verify
 
 Start the app through its normal service manager, or use `npm start` for a foreground run. Inspect startup logs and check `/readyz` on the configured port, for example `http://127.0.0.1:3333/readyz`.
+
+### Starting with PM2
+
+Run PM2 commands as the service account that should own the app, consistently using the same account. Install PM2 on the rebuilt server if necessary:
+
+```text
+npm install --global pm2
+```
+
+Start exactly one app process for this database. Keep file watching disabled. Do not also start `npm start` in another terminal or leave another service running the same app.
+
+On Linux, change to the new project directory first; replace `/srv/tls` with its actual path:
+
+```bash
+cd /srv/tls
+pm2 start npm --name tls -- start
+```
+
+On Windows, launch the project's installed TSX CLI directly, avoiding the npm command wrapper. Replace the project path as needed:
+
+```powershell
+Set-Location 'C:\GitHub\TLS'
+npm run check:platform
+# Continue only if the platform check succeeds.
+pm2 start ./node_modules/tsx/dist/cli.mjs --name tls --interpreter node -- server.ts
+```
+
+The Windows command runs the same `tsx server.ts` entry point as `npm start`; run the platform check explicitly because this command bypasses npm's `prestart` hook. Both examples keep media in the project `uploads/` and assets in `public/`.
+
+If the correct PM2 entry already exists and was stopped for restoration, resume it with `pm2 restart tls --update-env` instead of creating another entry. Inspect `pm2 describe tls` first to confirm its script and working directory point to the new installation. Replace an obsolete entry with `pm2 delete tls`, then use the appropriate start command above from the correct directory.
+
+Check the process and startup output:
+
+```text
+pm2 status
+pm2 describe tls
+pm2 logs tls --lines 100
+```
+
+Press Ctrl+C to leave the log viewer; the app continues running. Check `/readyz` and complete the functional checks below before saving the process list:
+
+```text
+pm2 save
+```
+
+On Linux, configure startup after reboot by running `pm2 startup` as the app account, then executing the exact privileged command it prints. Run `pm2 save` again after changing the process list. After upgrading Node.js, regenerate the PM2 startup hook so it uses the new Node executable.
+
+On Windows, `pm2 startup` does not provide a native Windows boot hook. Configure a Windows service or Task Scheduler task to run `pm2 resurrect` under the same account, using the installed executable's full path and ensuring Node.js is available to that account. `pm2 save` alone does not arrange Windows boot startup.
+
+For later maintenance, use `pm2 stop tls --watch`, perform the offline work, then `pm2 restart tls --update-env`. Restart after changing `.env`; also update any conflicting values inherited by PM2, because environment variables override `.env`. If you want the admin panel's Restart button, set `ADMIN_RESTART_ENABLED=true` only once PM2 is supervising the app and configured to restart it after exit code 0.
+
+See the official PM2 documentation for [process management](https://pm2.keymetrics.io/docs/usage/process-management/), [startup hooks](https://pm2.keymetrics.io/docs/usage/startup/) and [updating environment variables](https://pm2.io/docs/runtime/best-practices/environment-variables/).
 
 Sign in with an account and password from the restored database, then verify:
 
